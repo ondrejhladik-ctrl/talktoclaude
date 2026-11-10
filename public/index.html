@@ -3,70 +3,74 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0e0e0d" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff">
+<meta name="color-scheme" content="light">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Claude">
 <title>Claude</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
 <link rel="stylesheet" href="style.css">
 <script type="module" src="app.js"></script>
 </head>
 <body>
-<div id="app">
-  <header class="top">
-    <nav class="pill">
-      <button id="menuBtn" class="nav-btn" aria-label="Konverzace">
-        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M5 9h14M5 15h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        <span id="menuBadge" class="badge" hidden></span>
-      </button>
-      <span class="nav-title"><span id="conn" class="conn"></span><span id="title">Claude</span></span>
-      <button id="newQuickBtn" class="nav-btn" aria-label="Nová konverzace">
-        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 6v12M6 12h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-      </button>
-    </nav>
-    <div id="subText" class="sub">Připojuji…</div>
-  </header>
+<div id="app" class="stage">
+  <div class="blob-area">
+    <div id="blob" class="blob">
+      <canvas id="blobCanvas" aria-hidden="true"></canvas>
 
-  <main id="messages" class="messages">
-    <section id="empty" class="empty" hidden>
-      <button id="orbBtn" class="orb-btn" aria-label="Klepni a mluv"><span class="orb-wrap"><span class="orb-core"></span><span class="orb"></span></span></button>
-      <p class="hello">Ahoj, tady Claude.<br><span>Řekni mi, co mám na počítači udělat.</span></p>
-      <div class="suggestions">
-        <button class="sugg">Co je v téhle složce?</button>
-        <button class="sugg">Najdi v projektu chyby a oprav je</button>
-        <button class="sugg">Shrň, na čem jsem naposledy pracoval</button>
+      <div class="term">
+        <div class="term-head">
+          <span class="dots"><i id="conn" class="conn"></i><i></i><i></i></span>
+          <span id="tHead">claude ~</span>
+        </div>
+        <div id="tBody" class="term-body" aria-live="polite">
+          <div id="lines"></div>
+          <div id="tLive" class="ln out md" hidden></div>
+          <div id="tTail" class="ln tail"></div>
+        </div>
       </div>
-      <div id="emptyCwd" class="empty-cwd"></div>
-    </section>
-    <div id="list"></div>
-    <div id="live" class="msg assistant md live" hidden></div>
-    <div id="working" class="working" hidden><span class="tiny-wrap"><span class="orb-core"></span><span class="orb tiny"></span></span><span id="workingText">Pracuju…</span></div>
-  </main>
 
-  <footer class="composer">
-    <div id="speaking" class="speaking" hidden>
-      <span>Předčítám odpověď</span><button id="stopSpeakBtn" class="link-btn">Ztlumit</button>
+      <div id="pill" class="pill">
+        <div id="pillInput" class="pill-row">
+          <textarea id="input" rows="1" placeholder="Řekni nebo napiš…" enterkeyhint="send"></textarea>
+          <button id="actBtn" class="gbtn"><span id="actLabel">Mluv</span><span id="actIcon" class="ico"></span></button>
+        </div>
+        <div id="pillChoice" class="pill-row choice" hidden>
+          <span id="choiceLabel" class="choice-label">Povolit?</span>
+          <button id="noBtn" class="gbtn ghost">Ne</button>
+          <button id="alwaysBtn" class="gbtn ghost">Vždy</button>
+          <button id="yesBtn" class="gbtn">Povolit <span class="ico">⏎</span></button>
+        </div>
+      </div>
     </div>
-    <div class="bar">
-      <textarea id="input" rows="1" placeholder="Napiš, nebo klepni na mikrofon…" enterkeyhint="send"></textarea>
-      <button id="micBtn" class="round mic" aria-label="Mluvit">
-        <svg viewBox="0 0 24 24" width="20" height="20"><rect x="9" y="3.5" width="6" height="10.5" rx="3" fill="currentColor"/><path d="M5.8 11.2a6.2 6.2 0 0 0 12.4 0M12 17.4v3.1" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
-      </button>
-      <button id="sendBtn" class="round send" aria-label="Odeslat" hidden>
-        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 18.5V5.5M6.5 11 12 5.5 17.5 11" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
-      <button id="stopBtn" class="round stop" aria-label="Zastavit" hidden>
-        <svg viewBox="0 0 24 24" width="16" height="16"><rect x="5" y="5" width="14" height="14" rx="3" fill="currentColor"/></svg>
-      </button>
+    <div class="blob-shadow"></div>
+  </div>
+
+  <div class="under">
+    <div id="soundSeg" class="seg" role="group" aria-label="Zvuk">
+      <span class="seg-label">
+        <svg viewBox="0 0 24 24" width="15" height="15"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 0 1 0 6" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+        Zvuk
+      </span>
+      <button data-v="on">Zap</button>
+      <button data-v="off">Vyp</button>
     </div>
-  </footer>
+    <nav class="links">
+      <button id="menuBtn">Konverzace<span id="menuBadge" class="badge" hidden></span></button>
+      <span>·</span>
+      <button id="newQuickBtn">Nová</button>
+      <span>·</span>
+      <button id="settingsBtn">Nastavení</button>
+    </nav>
+  </div>
 </div>
 
 <section id="login" class="login" hidden>
-  <div class="orb-wrap"><span class="orb-core"></span><span class="orb"></span></div>
   <h1>Připoj se ke svému počítači</h1>
   <p id="loginMsg">Otevři odkaz, který ti ukázal počítač, nebo sem vlož odkaz či kód.</p>
   <input id="tokenInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Odkaz nebo kód">
@@ -75,17 +79,16 @@
 
 <dialog id="drawer" class="drawer">
   <div class="dlg">
-    <div class="dlg-head"><h2>Konverzace</h2><button class="nav-btn" data-close aria-label="Zavřít">✕</button></div>
+    <div class="dlg-head"><h2>Konverzace</h2><button class="x" data-close aria-label="Zavřít">✕</button></div>
     <button id="newBtn" class="btn primary wide">Nová konverzace</button>
-    <button id="newFolderBtn" class="btn ghost wide">Nová v jiné složce</button>
+    <button id="newFolderBtn" class="btn wide">Nová v jiné složce</button>
     <div id="sessList" class="sess-list"></div>
-    <button id="settingsBtn" class="btn ghost wide">Nastavení</button>
   </div>
 </dialog>
 
 <dialog id="newDlg" class="sheet">
   <div class="dlg">
-    <div class="dlg-head"><h2>Vyber složku</h2><button class="nav-btn" data-close aria-label="Zavřít">✕</button></div>
+    <div class="dlg-head"><h2>Vyber složku</h2><button class="x" data-close aria-label="Zavřít">✕</button></div>
     <div id="recent" class="chips"></div>
     <div id="cwdPath" class="cwd-path"></div>
     <div id="dirList" class="dir-list"></div>
@@ -95,9 +98,9 @@
 
 <dialog id="settingsDlg" class="sheet">
   <div class="dlg">
-    <div class="dlg-head"><h2>Nastavení</h2><button class="nav-btn" data-close aria-label="Zavřít">✕</button></div>
+    <div class="dlg-head"><h2>Nastavení</h2><button class="x" data-close aria-label="Zavřít">✕</button></div>
     <div id="qrBox" class="qr-box" hidden>
-      <img id="qrImg" alt="QR kód s odkazem na tuto aplikaci" width="200" height="200">
+      <img id="qrImg" alt="QR kód s odkazem na tuto aplikaci" width="180" height="180">
       <p class="hint">Tvůj odkaz – naskenuj mobilem a ulož si ho na plochu.</p>
       <a id="linkOut" class="link-out" target="_blank" rel="noopener noreferrer"></a>
     </div>
@@ -105,13 +108,6 @@
     <label class="row-set"><span>Po dodiktování odeslat</span><input id="setAutoSend" type="checkbox" class="switch"></label>
     <label class="row-set"><span>Zavibrovat, když je hotovo</span><input id="setVibrate" type="checkbox" class="switch"></label>
     <label class="row-set"><span>Nezhasínat displej při práci</span><input id="setWake" type="checkbox" class="switch"></label>
-    <label class="row-set"><span>Číst odpovědi nahlas</span>
-      <select id="setSpeak">
-        <option value="voice">Když mluvím</option>
-        <option value="always">Vždy</option>
-        <option value="never">Nikdy</option>
-      </select>
-    </label>
     <label class="row-set"><span>Jazyk</span>
       <select id="setLang">
         <option value="cs-CZ">Čeština</option>
@@ -123,7 +119,7 @@
     <label class="row-set col"><span>Rychlost čtení <b id="rateVal"></b></span>
       <input id="setRate" type="range" min="0.7" max="1.6" step="0.05">
     </label>
-    <button id="logoutBtn" class="btn ghost danger wide">Odpojit toto zařízení</button>
+    <button id="logoutBtn" class="btn danger wide">Odpojit toto zařízení</button>
   </div>
 </dialog>
 

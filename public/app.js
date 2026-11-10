@@ -1,4 +1,5 @@
-import { renderMarkdown, speakable, esc } from './markdown.js';
+import { renderMarkdown, speakable } from './markdown.js';
+import { createBlob } from './blob.js';
 
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => {
@@ -7,6 +8,7 @@ const el = (tag, cls, text) => {
   if (text != null) e.textContent = text;
   return e;
 };
+const line = (cls, text) => el('div', `ln ${cls}`, text);
 
 const store = {
   get(k, d) { try { const v = localStorage.getItem(`ttc.${k}`); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -15,33 +17,42 @@ const store = {
 };
 
 const settings = Object.assign(
-  { lang: 'cs-CZ', speak: 'voice', rate: 1.05, autoSend: true, vibrate: true, wakeLock: true },
+  { lang: 'cs-CZ', speak: 'always', rate: 1.05, autoSend: true, vibrate: true, wakeLock: true },
   store.get('settings', {}),
 );
+if (settings.speak === 'voice') settings.speak = 'always';
 const saveSettings = () => store.set('settings', settings);
 
+const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const SUGGESTIONS = ['co je v téhle složce?', 'najdi v projektu chyby a oprav je', 'shrň, na čem jsem naposledy pracoval'];
+const ICON = {
+  mic: '<svg viewBox="0 0 24 24" width="15" height="15"><rect x="9" y="3.5" width="6" height="10.5" rx="3" fill="currentColor"/><path d="M5.8 11.2a6.2 6.2 0 0 0 12.4 0M12 17.4v3.1" stroke="currentColor" stroke-width="1.9" fill="none" stroke-linecap="round"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" width="12" height="12"><rect x="5" y="5" width="14" height="14" rx="3" fill="currentColor"/></svg>',
+  enter: '⏎',
+};
 const TOOL_LABEL = {
-  Bash: 'Příkaz', PowerShell: 'PowerShell', Read: 'Čte', Write: 'Zapisuje', Edit: 'Upravuje', MultiEdit: 'Upravuje',
-  Glob: 'Hledá soubory', Grep: 'Hledá v textu', WebFetch: 'Otevírá web', WebSearch: 'Hledá na webu',
-  Task: 'Pomocník', Agent: 'Pomocník', TodoWrite: 'Úkoly', NotebookEdit: 'Notebook', Skill: 'Dovednost',
+  Bash: 'příkaz', PowerShell: 'příkaz', Read: 'čtu', Write: 'zapisuju', Edit: 'upravuju', MultiEdit: 'upravuju',
+  Glob: 'hledám soubory', Grep: 'hledám v textu', WebFetch: 'otevírám web', WebSearch: 'hledám na webu',
+  Task: 'pomocník', Agent: 'pomocník', NotebookEdit: 'notebook', Skill: 'dovednost',
 };
 const PERM_TITLE = {
   Bash: 'Spustit příkaz', PowerShell: 'Spustit příkaz', Write: 'Zapsat soubor', Edit: 'Upravit soubor',
-  MultiEdit: 'Upravit soubor', NotebookEdit: 'Upravit notebook', WebFetch: 'Otevřít webovou stránku',
+  MultiEdit: 'Upravit soubor', NotebookEdit: 'Upravit notebook', WebFetch: 'Otevřít web',
   WebSearch: 'Hledat na webu', Read: 'Přečíst soubor', Task: 'Spustit pomocníka', Agent: 'Spustit pomocníka',
 };
 
 const S = {
-  token: null, ws: null, retry: 0, retryTimer: null,
-  sessions: [], recent: [], defaults: {}, hasQr: false, link: null, mode: 'bypassPermissions',
+  token: null, ws: null, retry: 0, retryTimer: null, connState: 'connecting',
+  sessions: [], recent: [], defaults: {}, hasQr: false, link: null, mode: 'default',
   sid: store.get('sid', null), meta: null, events: [], nodes: new Map(), toolNodes: new Map(),
-  liveText: '', liveRaf: 0,
+  liveText: '', liveRaf: 0, listening: false, speaking: false,
   voiceDraft: false, queued: null, browsePath: null,
 };
 
-const list = $('list');
-const messagesEl = $('messages');
+const lines = $('lines');
+const body = $('tBody');
 const inputEl = $('input');
+const blob = createBlob($('blobCanvas'));
 
 // ======================================================== připojení
 
@@ -58,9 +69,9 @@ function showLogin(msg) {
 }
 
 function setConn(state) {
+  S.connState = state;
   $('conn').className = `conn ${state}`;
-  if (state !== 'online') $('subText').textContent = state === 'connecting' ? 'Připojuji k počítači…' : 'Odpojeno – zkouším znovu…';
-  else updateHeader();
+  updateHead();
 }
 
 function connect() {
@@ -83,7 +94,7 @@ function connect() {
     if (e.code === 4401) {
       store.del('token');
       S.token = null;
-      showLogin('Neplatný přístupový kód. Otevři znovu odkaz nebo QR kód z terminálu na počítači.');
+      showLogin('Neplatný kód. Otevři znovu odkaz z počítače.');
       return;
     }
     setConn('offline');
@@ -127,6 +138,7 @@ function handle(m) {
       S.sessions = m.sessions;
       if (m.recent) S.recent = m.recent;
       renderSessions();
+      updateHead();
       break;
     case 'meta': upsertMeta(m.session); break;
     case 'link': S.link = m.link; S.hasQr = !!m.link; rememberLauncher(m.link); break;
@@ -153,7 +165,7 @@ function handle(m) {
   }
 }
 
-// ======================================================== konverzace
+// ======================================================== konverzace → terminál
 
 function showSession(meta, events) {
   S.sid = meta ? meta.id : null;
@@ -175,35 +187,50 @@ function upsertMeta(meta, quiet) {
     buzz([80, 60, 80]);
   }
   renderSessions();
-  updateHeader();
-  updateComposer();
-  updateWorking();
-  updateWakeLock();
+  refresh();
 }
 
-function updateHeader() {
-  const m = S.meta;
-  $('title').textContent = m ? m.title : 'Claude';
-  if ($('conn').classList.contains('online')) {
-    $('subText').textContent = m ? folderName(m.cwd) : `Připojeno k ${S.defaults.host || 'počítači'}`;
-  }
+const folderName = p => (p || '').split(/[\\/]/).filter(Boolean).pop() || p || '';
+
+function updateHead() {
+  const host = String(S.defaults.host || 'pc').toLowerCase();
+  const folder = folderName(S.meta ? S.meta.cwd : (S.recent[0] || S.defaults.cwd || ''));
+  let text = `claude@${host} ~ ${folder}`;
+  if (S.connState === 'connecting') text = 'připojuji se k počítači…';
+  else if (S.connState === 'offline') text = 'odpojeno – zkouším znovu…';
+  $('tHead').textContent = text;
   const waiting = S.sessions.filter(s => s.id !== S.sid && s.pending > 0).length;
   $('menuBadge').hidden = !waiting;
   $('menuBadge').textContent = waiting;
 }
 
-const folderName = p => (p || '').split(/[\\/]/).filter(Boolean).pop() || p || '';
+function refresh() {
+  updateHead();
+  updatePill();
+  updateTail();
+  setBlobMode();
+  updateWakeLock();
+}
+
+function renderIntro() {
+  lines.append(
+    line('dim', '# ahoj, tady Claude – pracuju přímo na tvém počítači'),
+    line('dim', '# řekni nebo napiš, co mám udělat. třeba:'),
+  );
+  for (const s of SUGGESTIONS) {
+    const d = line('sugg', `  → ${s}`);
+    d.onclick = () => sendText(s);
+    lines.append(d);
+  }
+}
 
 function renderAll() {
-  list.textContent = '';
+  lines.textContent = '';
   S.nodes.clear();
   S.toolNodes.clear();
+  if (!S.events.length) renderIntro();
   for (const ev of S.events) renderEvent(ev);
-  $('empty').hidden = !!S.events.length;
-  $('emptyCwd').textContent = S.meta ? S.meta.cwd : (S.recent[0] || S.defaults.cwd || '');
-  updateHeader();
-  updateComposer();
-  updateWorking();
+  refresh();
   scrollBottom(true);
 }
 
@@ -213,23 +240,23 @@ function onEvent(ev) {
     S.events[i] = ev;
     const old = S.nodes.get(ev.n);
     const node = buildNode(ev);
-    if (old && node) { node.dataset.n = ev.n; old.replaceWith(node); S.nodes.set(ev.n, node); }
-    updateComposer();
-    updateWorking();
+    if (old && node) { old.replaceWith(node); S.nodes.set(ev.n, node); }
+    refresh();
     return;
   }
   const near = isNearBottom();
+  if (!S.events.length) lines.textContent = '';
   S.events.push(ev);
-  $('empty').hidden = true;
-  if (ev.k === 'text') clearLive();
+  if (ev.k === 'text') { clearLive(); blob.pulse(0.35); }
+  if (ev.k === 'tool') blob.pulse(0.25);
   renderEvent(ev);
   if (ev.k === 'perm' && ev.status === 'pending') {
     buzz([80, 60, 80]);
-    if (wantSpeech()) say(ev.kind === 'question' ? 'Claude se na něco ptá.' : 'Claude potřebuje tvoje povolení.');
+    blob.pulse(0.6);
+    if (wantSpeech()) say(ev.kind === 'question' ? 'Na něco se ptám.' : 'Potřebuju tvoje povolení.');
   }
   if (ev.k === 'result') onTurnDone(ev);
-  updateComposer();
-  updateWorking();
+  refresh();
   if (near || ev.k === 'user' || ev.k === 'perm') scrollBottom();
 }
 
@@ -237,40 +264,37 @@ function renderEvent(ev) {
   if (ev.k === 'tool_result') { attachResult(ev); return; }
   const node = buildNode(ev);
   if (!node) return;
-  node.dataset.n = ev.n;
   S.nodes.set(ev.n, node);
-  list.appendChild(node);
-}
-
-function buildNode(ev) {
-  switch (ev.k) {
-    case 'user': {
-      const n = el('div', 'msg user');
-      const b = el('div', 'bubble', ev.text);
-      if (ev.voice) b.appendChild(el('span', 'via', 'nadiktováno'));
-      n.appendChild(b);
-      return n;
-    }
-    case 'text': {
-      const n = el('div', 'msg assistant md');
-      n.innerHTML = renderMarkdown(ev.text);
-      return n;
-    }
-    case 'tool': return buildTool(ev);
-    case 'perm': return buildPerm(ev);
-    case 'result': {
-      if (ev.interrupted) return el('div', 'msg result', '⏹ Přerušeno');
-      if (ev.ok) return el('div', 'msg result', `✓ Hotovo${ev.ms ? ` · ${fmtDur(ev.ms)}` : ''}`);
-      return el('div', 'msg error', `Chyba: ${ev.text || ev.subtype || 'neznámá'}`);
-    }
-    case 'error': return el('div', 'msg error', ev.text);
-    case 'info': return el('div', 'msg info', ev.text);
-    default: return null;
-  }
+  lines.appendChild(node);
 }
 
 const fmtDur = ms => (ms < 60000 ? `${Math.round(ms / 1000)} s` : `${Math.floor(ms / 60000)} min ${Math.round((ms % 60000) / 1000)} s`);
 const shortPath = p => (typeof p === 'string' ? p.replace(/^.*[\\/](?=[^\\/]+[\\/][^\\/]+$)/, '…/') : '');
+
+function buildNode(ev) {
+  switch (ev.k) {
+    case 'user': {
+      const d = line('cmd');
+      d.append(el('span', 'ps', '~ $ '), document.createTextNode(ev.text));
+      if (ev.voice) d.append(el('span', 'dim', '  🎤'));
+      return d;
+    }
+    case 'text': {
+      const d = el('div', 'ln out md');
+      d.innerHTML = renderMarkdown(ev.text);
+      return d;
+    }
+    case 'tool': return buildTool(ev);
+    case 'perm': return buildPerm(ev);
+    case 'result':
+      if (ev.interrupted) return line('dim', '■ přerušeno');
+      if (ev.ok) return line('dim', `✓ hotovo${ev.ms ? ` · ${fmtDur(ev.ms)}` : ''}`);
+      return line('err', `✗ ${ev.text || ev.subtype || 'chyba'}`);
+    case 'error': return line('err', `✗ ${ev.text}`);
+    case 'info': return line('dim', `# ${ev.text}`);
+    default: return null;
+  }
+}
 
 function toolSummary(name, inp = {}) {
   switch (name) {
@@ -282,128 +306,130 @@ function toolSummary(name, inp = {}) {
     case 'WebFetch': return inp.url;
     case 'WebSearch': return inp.query;
     case 'Task': case 'Agent': return inp.description || (inp.prompt || '').slice(0, 80);
-    case 'TodoWrite': {
-      const t = inp.todos || [];
-      return `${t.filter(x => x.status === 'completed').length}/${t.length} hotovo`;
-    }
     case 'Skill': return inp.skill || inp.command;
     default: return name.startsWith('mcp__') ? name.split('__').slice(1).join(' · ') : '';
   }
 }
 
-function toolDetail(name, inp = {}) {
-  const box = el('div');
+function detailNode(name, inp = {}, out) {
+  const d = line('detail');
   if (name === 'Bash' || name === 'PowerShell') {
-    box.appendChild(el('pre', 'pre', `$ ${inp.command || ''}`));
+    d.append(`$ ${inp.command || ''}`);
   } else if (name === 'Edit' || name === 'MultiEdit') {
-    const edits = name === 'MultiEdit' ? inp.edits || [] : [inp];
-    box.appendChild(el('div', 'perm-sub', inp.file_path || ''));
-    for (const e of edits) box.appendChild(diffPre(e.old_string, e.new_string));
+    d.append(`${inp.file_path || ''}\n`);
+    for (const e of name === 'MultiEdit' ? inp.edits || [] : [inp]) {
+      for (const l of String(e.old_string || '').split('\n').slice(0, 30)) d.append(el('span', 'del', `- ${l}`));
+      for (const l of String(e.new_string || '').split('\n').slice(0, 30)) d.append(el('span', 'add', `+ ${l}`));
+    }
   } else if (name === 'Write') {
-    box.appendChild(el('div', 'perm-sub', inp.file_path || ''));
-    const lines = String(inp.content || '').split('\n');
-    box.appendChild(el('pre', 'pre', lines.slice(0, 60).join('\n') + (lines.length > 60 ? `\n… (+${lines.length - 60} řádků)` : '')));
+    const l = String(inp.content || '').split('\n');
+    d.append(`${inp.file_path || ''}\n${l.slice(0, 40).join('\n')}${l.length > 40 ? `\n… (+${l.length - 40} řádků)` : ''}`);
   } else {
-    box.appendChild(el('pre', 'pre', JSON.stringify(inp, null, 2)));
+    d.append(JSON.stringify(inp, null, 2));
   }
-  return box;
-}
-
-function diffPre(oldS, newS) {
-  const pre = el('pre', 'pre');
-  for (const l of String(oldS || '').split('\n')) pre.appendChild(el('span', 'diff-del', `- ${l}`));
-  for (const l of String(newS || '').split('\n')) pre.appendChild(el('span', 'diff-add', `+ ${l}`));
-  return pre;
+  if (out) d.append(`\n\n${out.length > 2000 ? `${out.slice(0, 2000)}…` : out}`);
+  return d;
 }
 
 function buildTool(ev) {
   if (ev.name === 'TodoWrite') {
-    const n = el('div', 'msg tool');
-    const ul = el('ul', 'todos');
+    const box = el('div');
     for (const t of ev.input?.todos || []) {
-      const li = el('li', t.status === 'completed' ? 'done' : t.status === 'in_progress' ? 'doing' : '');
-      li.textContent = `${t.status === 'completed' ? '☑' : t.status === 'in_progress' ? '◐' : '☐'} ${t.content || t.activeForm || ''}`;
-      ul.appendChild(li);
+      const mark = t.status === 'completed' ? '[x]' : t.status === 'in_progress' ? '[~]' : '[ ]';
+      box.append(line(t.status === 'in_progress' ? 'out' : 'dim', `${mark} ${t.content || t.activeForm || ''}`));
     }
-    n.appendChild(ul);
-    return n;
+    return box;
   }
-  const n = el('div', 'msg tool');
-  const head = el('button', 'tool-head');
-  head.append(
-    el('span', 'tool-ico', '⚙'),
-    el('span', 'tool-name', TOOL_LABEL[ev.name] || ev.name),
-    el('span', 'tool-sum', toolSummary(ev.name, ev.input) || ''),
-    el('span', 'tool-chev', '›'),
-  );
-  const body = el('div', 'tool-body');
-  body.hidden = true;
-  head.onclick = () => {
-    if (!body.firstChild) body.appendChild(toolDetail(ev.name, ev.input));
-    body.hidden = !body.hidden;
-    n.classList.toggle('open', !body.hidden);
-    if (n._out && !body.contains(n._out)) body.appendChild(n._out);
+  const d = line('tool');
+  d.append(`→ ${TOOL_LABEL[ev.name] || ev.name}  ${toolSummary(ev.name, ev.input) || ''}`, el('span', 'st'));
+  S.toolNodes.set(ev.id, d);
+  const done = S.events.find(e => e.k === 'tool_result' && e.id === ev.id);
+  if (!done && S.meta?.running) { d.classList.add('run'); d.lastChild.textContent = '…'; }
+  d.onclick = () => {
+    if (d._detail) { d._detail.remove(); d._detail = null; return; }
+    d._detail = detailNode(ev.name, ev.input, d._out);
+    d.after(d._detail);
   };
-  n.append(head, body);
-  S.toolNodes.set(ev.id, n);
-  const running = S.meta?.running && !S.events.some(e => e.k === 'tool_result' && e.id === ev.id);
-  if (running) { n.classList.add('run'); head.firstChild.textContent = '◌'; }
-  return n;
+  return d;
 }
 
 function attachResult(ev) {
-  const n = S.toolNodes.get(ev.id);
-  if (!n) return;
-  n.classList.remove('run');
-  n.classList.add(ev.isError ? 'err' : 'ok');
-  const ico = n.querySelector('.tool-ico');
-  if (ico) ico.textContent = ev.isError ? '✗' : '✓';
-  if (ev.text) {
-    const t = ev.text.length > 4000 ? `${ev.text.slice(0, 4000)}\n…` : ev.text;
-    n._out = el('pre', 'pre out', t);
-    const body = n.querySelector('.tool-body');
-    if (body && body.firstChild) body.appendChild(n._out);
-  }
+  const d = S.toolNodes.get(ev.id);
+  if (!d) return;
+  d.classList.remove('run');
+  d.classList.add(ev.isError ? 'bad' : 'ok');
+  d.lastChild.textContent = ev.isError ? '✗' : '✓';
+  d._out = ev.text || '';
 }
 
-// ---------------- povolení, otázky, plán
+function pendingPerm() {
+  for (let i = S.events.length - 1; i >= 0; i--) {
+    const e = S.events[i];
+    if (e.k === 'perm' && e.status === 'pending') return e;
+  }
+  return null;
+}
 
 function buildPerm(ev) {
-  if (ev.status !== 'pending') return buildPermDone(ev);
-  if (ev.kind === 'question') return buildQuestion(ev);
-  const n = el('div', 'msg card perm');
+  const what = ev.kind === 'question' ? 'otázka' : ev.kind === 'plan' ? 'plán' : `${PERM_TITLE[ev.tool] || ev.tool}: ${toolSummary(ev.tool, ev.input) || ''}`;
+  if (ev.status !== 'pending') {
+    const label = { allowed: '✓ povoleno', always: '✓ povoleno vždy', answered: '✓ odpověď', denied: '✗ zamítnuto', cancelled: '– zrušeno' }[ev.status] || ev.status;
+    const box = el('div');
+    box.append(line(ev.status === 'denied' ? 'err' : 'dim', `${label} · ${what}`));
+    for (const [q, a] of Object.entries(ev.answers || {})) box.append(line('dim', `  ${q} → ${a}`));
+    return box;
+  }
+  const box = el('div');
+  if (ev.kind === 'question') {
+    const qs = ev.input?.questions || [];
+    const answers = qs.map(() => null);
+    const submit = () => {
+      if (answers.some(a => a == null)) return;
+      const out = {};
+      qs.forEach((q, i) => { out[q.question] = answers[i]; });
+      decide(ev, 'answer', { answers: out });
+    };
+    qs.forEach((q, qi) => {
+      box.append(line('ask', `? ${q.question}`));
+      const opts = el('div', 'opts');
+      const picked = new Set();
+      for (const o of q.options || []) {
+        const b = el('button', 'opt', o.label);
+        if (o.description) b.title = o.description;
+        b.onclick = () => {
+          if (q.multiSelect) {
+            picked.has(o.label) ? picked.delete(o.label) : picked.add(o.label);
+            b.classList.toggle('sel', picked.has(o.label));
+          } else {
+            opts.querySelectorAll('.opt').forEach(x => x.classList.remove('sel'));
+            b.classList.add('sel');
+            answers[qi] = o.label;
+            submit();
+          }
+        };
+        opts.append(b);
+      }
+      if (q.multiSelect) {
+        const ok = el('button', 'opt', 'hotovo ⏎');
+        ok.onclick = () => { if (picked.size) { answers[qi] = [...picked].join(', '); submit(); } };
+        opts.append(ok);
+      }
+      box.append(opts);
+    });
+    return box;
+  }
   if (ev.kind === 'plan') {
-    n.appendChild(el('div', 'perm-title', '📋 Claude navrhuje plán'));
-    const plan = el('div', 'plan md');
+    box.append(line('ask', '? navrhuju tento plán:'));
+    const plan = el('div', 'ln out md');
     plan.innerHTML = renderMarkdown(ev.input?.plan || '');
-    n.appendChild(plan);
-    n.appendChild(actions([
-      ['Schválit', 'primary', () => decide(ev, 'allow')],
-      ['Schválit + upravovat sám', '', () => decide(ev, 'allowEdits')],
-      ['Zamítnout', 'danger', () => decide(ev, 'deny')],
-    ]));
-  } else {
-    n.appendChild(el('div', 'perm-title', `🔐 ${PERM_TITLE[ev.tool] || `Použít nástroj ${ev.tool}`}`));
-    const sub = [ev.title, ev.description].filter(Boolean).join(' · ');
-    if (sub) n.appendChild(el('div', 'perm-sub', sub));
-    n.appendChild(toolDetail(ev.tool, ev.input));
-    const btns = [['Povolit', 'primary', () => decide(ev, 'allow')]];
-    if (ev.canAlways) btns.push(['Vždy povolit', '', () => decide(ev, 'always')]);
-    btns.push(['Zamítnout', 'danger', () => decide(ev, 'deny')]);
-    n.appendChild(actions(btns));
+    box.append(plan);
+    return box;
   }
-  n.appendChild(el('div', 'perm-tip', 'Nebo napiš / řekni, co má udělat jinak.'));
-  return n;
-}
-
-function actions(btns) {
-  const row = el('div', 'actions');
-  for (const [label, cls, fn] of btns) {
-    const b = el('button', `btn ${cls}`, label);
-    b.onclick = () => { row.querySelectorAll('button').forEach(x => { x.disabled = true; }); fn(); };
-    row.appendChild(b);
-  }
-  return row;
+  box.append(line('ask', `? ${PERM_TITLE[ev.tool] || `použít ${ev.tool}`} – můžu?`));
+  const sub = [ev.title, ev.description].filter(Boolean).join(' · ');
+  if (sub) box.append(line('dim', sub));
+  box.append(detailNode(ev.tool, ev.input));
+  return box;
 }
 
 function decide(ev, decision, extra = {}) {
@@ -411,81 +437,20 @@ function decide(ev, decision, extra = {}) {
   wsSend({ t: 'perm', sid: S.sid, id: ev.n, decision, ...extra });
 }
 
-function buildQuestion(ev) {
-  const n = el('div', 'msg card perm');
-  n.appendChild(el('div', 'perm-title', '❓ Claude se ptá'));
-  const qs = ev.input?.questions || [];
-  const state = qs.map(() => ({ sel: new Set(), other: '' }));
-  const submit = el('button', 'btn primary', 'Odpovědět');
-  const refresh = () => { submit.disabled = !state.every(s => s.sel.size || s.other.trim()); };
-  qs.forEach((q, qi) => {
-    const box = el('div', 'q');
-    if (q.header) box.appendChild(el('div', 'q-head', q.header));
-    box.appendChild(el('div', 'q-text', q.question));
-    const opts = el('div', 'q-opts');
-    for (const o of q.options || []) {
-      const b = el('button', 'opt');
-      b.appendChild(el('b', '', o.label));
-      if (o.description) b.appendChild(el('span', '', o.description));
-      b.onclick = () => {
-        const s = state[qi];
-        if (q.multiSelect) { s.sel.has(o.label) ? s.sel.delete(o.label) : s.sel.add(o.label); }
-        else { s.sel.clear(); s.sel.add(o.label); }
-        opts.querySelectorAll('.opt').forEach(x => x.classList.toggle('sel', s.sel.has(x.firstChild.textContent)));
-        refresh();
-      };
-      opts.appendChild(b);
-    }
-    const other = el('input', 'q-other');
-    other.placeholder = 'Jiná odpověď…';
-    other.oninput = () => { state[qi].other = other.value; refresh(); };
-    box.append(opts, other);
-    n.appendChild(box);
-  });
-  submit.onclick = () => {
-    const answers = {};
-    qs.forEach((q, qi) => {
-      const parts = [...state[qi].sel];
-      if (state[qi].other.trim()) parts.push(state[qi].other.trim());
-      answers[q.question] = parts.join(', ');
-    });
-    submit.disabled = true;
-    decide(ev, 'answer', { answers });
-  };
-  const skip = el('button', 'btn', 'Přeskočit');
-  skip.onclick = () => decide(ev, 'deny');
-  const row = el('div', 'actions');
-  row.append(submit, skip);
-  n.appendChild(row);
-  refresh();
-  return n;
-}
-
-function buildPermDone(ev) {
-  const n = el('div', `msg perm-done ${ev.status === 'denied' || ev.status === 'cancelled' ? 'denied' : ''}`);
-  const what = ev.kind === 'question' ? 'Otázka' : ev.kind === 'plan' ? 'Plán' : `${PERM_TITLE[ev.tool] || ev.tool}: ${toolSummary(ev.tool, ev.input) || ''}`;
-  const label = { allowed: '✓ Povoleno', always: '✓ Povoleno vždy', answered: '✓ Zodpovězeno', denied: '✗ Zamítnuto', cancelled: '– Zrušeno' }[ev.status] || ev.status;
-  n.innerHTML = `<b>${esc(label)}</b> · ${esc(what)}`;
-  if (ev.answers) {
-    for (const [q, a] of Object.entries(ev.answers)) n.appendChild(el('div', '', `${q} → ${a}`));
-  }
-  return n;
-}
-
-// ---------------- živý text a indikátor práce
+// ---------------- živý text, poslední řádek terminálu
 
 function onDelta(m) {
   if (m.reset) { if (S.liveText) S.liveText += '\n\n'; return; }
   if (!m.text) return;
   S.liveText += m.text;
+  blob.pulse(0.3);
   if (!S.liveRaf) {
     S.liveRaf = requestAnimationFrame(() => {
       S.liveRaf = 0;
       const near = isNearBottom();
-      const live = $('live');
-      live.hidden = !S.liveText;
-      live.innerHTML = renderMarkdown(S.liveText);
-      updateWorking();
+      $('tLive').hidden = !S.liveText;
+      $('tLive').innerHTML = renderMarkdown(S.liveText);
+      updateTail();
       if (near) scrollBottom();
     });
   }
@@ -494,26 +459,33 @@ function onDelta(m) {
 function clearLive() {
   S.liveText = '';
   if (S.liveRaf) { cancelAnimationFrame(S.liveRaf); S.liveRaf = 0; }
-  $('live').hidden = true;
-  $('live').textContent = '';
+  $('tLive').hidden = true;
+  $('tLive').textContent = '';
 }
 
-let workTimer = 0;
-function updateWorking() {
+let tailTimer = 0;
+function updateTail() {
+  const tail = $('tTail');
+  clearInterval(tailTimer);
+  tail.textContent = '';
   const running = !!S.meta?.running;
-  const pending = S.events.some(e => e.k === 'perm' && e.status === 'pending');
-  const show = running && !pending && !S.liveText;
-  $('working').hidden = !show;
-  clearInterval(workTimer);
-  if (show) {
+  if (pendingPerm() || (running && S.liveText)) { tail.hidden = true; return; }
+  tail.hidden = false;
+  if (running) {
+    tail.className = 'ln tail dim';
     const lastUser = [...S.events].reverse().find(e => e.k === 'user');
+    const frames = ['|', '/', '-', '\\'];
+    let f = 0;
     const tick = () => {
       const s = lastUser ? Math.max(0, Math.round((Date.now() - lastUser.ts) / 1000)) : 0;
-      $('workingText').textContent = `Pracuju… ${s >= 3 ? fmtDur(s * 1000) : ''}`;
+      tail.textContent = `${frames[f++ % 4]} pracuju…${s >= 3 ? ` ${fmtDur(s * 1000)}` : ''}`;
     };
     tick();
-    workTimer = setInterval(tick, 1000);
+    tailTimer = setInterval(tick, 150);
+    return;
   }
+  tail.className = 'ln tail';
+  tail.append(el('span', 'ps', '~ $ '), document.createTextNode(inputEl.value), el('span', 'cursor'));
 }
 
 function onTurnDone(ev) {
@@ -530,21 +502,37 @@ function onTurnDone(ev) {
   else if (!ev.ok && !ev.interrupted) say('Něco se pokazilo.');
 }
 
-// ======================================================== composer
+// ======================================================== skleněný pruh
 
-function updateComposer() {
+function updatePill() {
+  const p = pendingPerm();
+  const choice = !!p && p.kind !== 'question';
+  $('pillChoice').hidden = !choice;
+  $('pillInput').hidden = choice;
+  if (choice) {
+    $('choiceLabel').textContent = p.kind === 'plan' ? 'Schválit plán?' : `${PERM_TITLE[p.tool] || p.tool}?`;
+    $('alwaysBtn').hidden = p.kind === 'plan' || !p.canAlways;
+    $('yesBtn').firstChild.textContent = p.kind === 'plan' ? 'Schválit ' : 'Povolit ';
+    return;
+  }
   const has = !!inputEl.value.trim();
   const running = !!S.meta?.running;
-  $('sendBtn').hidden = !has;
-  $('stopBtn').hidden = has || !running;
-  document.body.classList.toggle('busy', running);
-  const pending = S.events.some(e => e.k === 'perm' && e.status === 'pending');
-  inputEl.placeholder = pending ? 'Napiš nebo řekni, co udělat jinak…' : 'Napiš, nebo klepni na mikrofon…';
+  let label = 'Mluv';
+  let icon = ICON.mic;
+  if (S.listening) { label = 'Hotovo'; icon = ICON.stop; }
+  else if (has) { label = 'Spustit'; icon = ICON.enter; }
+  else if (running) { label = 'Stop'; icon = ICON.stop; }
+  $('actLabel').textContent = label;
+  $('actIcon').innerHTML = icon;
+  $('actBtn').classList.toggle('listening', S.listening);
+  inputEl.placeholder = S.listening ? 'Poslouchám…'
+    : p?.kind === 'question' ? 'Nebo napiš vlastní odpověď…'
+      : running ? 'Napiš další pokyn…' : 'Řekni nebo napiš…';
 }
 
 function autoGrow() {
   inputEl.style.height = 'auto';
-  inputEl.style.height = `${Math.min(inputEl.scrollHeight + 2, window.innerHeight * 0.4)}px`;
+  inputEl.style.height = `${Math.min(inputEl.scrollHeight, window.innerHeight * 0.3)}px`;
 }
 
 function sendText(textArg) {
@@ -560,13 +548,15 @@ function sendText(textArg) {
   S.voiceDraft = false;
   inputEl.value = '';
   autoGrow();
-  updateComposer();
+  updatePill();
+  updateTail();
 }
 
 inputEl.addEventListener('input', () => {
   if (!inputEl.value.trim()) S.voiceDraft = false;
   autoGrow();
-  updateComposer();
+  updatePill();
+  updateTail();
 });
 inputEl.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && matchMedia('(pointer: fine)').matches) {
@@ -574,9 +564,22 @@ inputEl.addEventListener('keydown', e => {
     sendText();
   }
 });
-$('sendBtn').onclick = () => sendText();
-$('stopBtn').onclick = () => { if (S.sid) wsSend({ t: 'interrupt', sid: S.sid }); };
-document.querySelectorAll('.sugg').forEach(b => { b.onclick = () => sendText(b.textContent); });
+$('actBtn').onclick = () => {
+  if (S.listening) stopListening();
+  else if (inputEl.value.trim()) sendText();
+  else if (S.meta?.running) { if (S.sid) wsSend({ t: 'interrupt', sid: S.sid }); }
+  else startListening();
+};
+const choose = d => { const p = pendingPerm(); if (p) decide(p, d); };
+$('yesBtn').onclick = () => choose('allow');
+$('noBtn').onclick = () => choose('deny');
+$('alwaysBtn').onclick = () => choose('always');
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !$('pillChoice').hidden && e.target !== inputEl && !document.querySelector('dialog[open]')) {
+    e.preventDefault();
+    choose('allow');
+  }
+});
 
 // ======================================================== hlas – rozpoznávání řeči
 
@@ -585,17 +588,19 @@ let rec = null;
 let recFinal = '';
 let recBase = '';
 
-if (!SR || !window.isSecureContext) $('micBtn').classList.add('unavailable');
+function setListening(on) {
+  S.listening = on;
+  updatePill();
+  setBlobMode();
+  if (on && !isMobile) blob.attachMic();
+  if (!on) blob.detachMic();
+}
+
+function stopListening() { rec?.stop(); }
 
 function startListening() {
-  if (!window.isSecureContext) {
-    toast('Mikrofon v prohlížeči funguje jen přes HTTPS. Otevři adresu https://… z terminálu, nebo použij diktování na klávesnici.', true);
-    return;
-  }
-  if (!SR) {
-    toast('Tento prohlížeč neumí rozpoznávat řeč. Použij diktování na klávesnici (ikona mikrofonu na klávesnici). Nejlíp funguje Chrome.', true);
-    return;
-  }
+  if (!window.isSecureContext) { toast('Mikrofon funguje jen přes https odkaz. Použij diktování na klávesnici.', true); return; }
+  if (!SR) { toast('Tenhle prohlížeč neumí rozpoznávat řeč. Použij Chrome, nebo diktování na klávesnici.', true); return; }
   stopSpeaking();
   unlockAudio();
   rec = new SR();
@@ -605,6 +610,8 @@ function startListening() {
   rec.maxAlternatives = 1;
   recBase = inputEl.value.trim() ? `${inputEl.value.trim()} ` : '';
   recFinal = '';
+  rec.onsoundstart = () => blob.pulse(0.4);
+  rec.onspeechstart = () => blob.pulse(0.5);
   rec.onresult = e => {
     let fin = '';
     let interim = '';
@@ -615,11 +622,12 @@ function startListening() {
     recFinal = fin;
     inputEl.value = recBase + fin + interim;
     S.voiceDraft = true;
+    blob.pulse(0.55);
     autoGrow();
-    updateComposer();
+    updateTail();
   };
   rec.onerror = e => {
-    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Přístup k mikrofonu je zakázaný. Povol ho v nastavení prohlížeče pro tuto stránku.', true);
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Přístup k mikrofonu je zakázaný. Povol ho v prohlížeči pro tuhle stránku.', true);
     else if (e.error === 'no-speech') toast('Nic jsem neslyšel.');
     else if (e.error === 'network') toast('Rozpoznávání řeči potřebuje internet.', true);
     else if (e.error !== 'aborted') toast(`Chyba rozpoznávání řeči: ${e.error}`, true);
@@ -628,6 +636,7 @@ function startListening() {
     rec = null;
     setListening(false);
     if (settings.autoSend && recFinal.trim() && inputEl.value.trim()) sendText();
+    else updateTail();
   };
   try {
     rec.start();
@@ -638,14 +647,6 @@ function startListening() {
   }
 }
 
-function setListening(on) {
-  $('micBtn').classList.toggle('listening', on);
-  $('orbBtn').classList.toggle('listening', on);
-}
-const toggleMic = () => { if (rec) rec.stop(); else startListening(); };
-$('micBtn').onclick = toggleMic;
-$('orbBtn').onclick = toggleMic;
-
 // ======================================================== hlas – předčítání
 
 let audioUnlocked = false;
@@ -654,12 +655,10 @@ function unlockAudio() {
   audioUnlocked = true;
   try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } catch {}
 }
+document.addEventListener('pointerdown', unlockAudio, { once: true });
 
 function wantSpeech() {
-  if (!('speechSynthesis' in window) || settings.speak === 'never') return false;
-  if (settings.speak === 'always') return true;
-  const lastUser = [...S.events].reverse().find(e => e.k === 'user');
-  return !!lastUser?.voice;
+  return 'speechSynthesis' in window && settings.speak === 'always';
 }
 
 function pickVoice() {
@@ -677,15 +676,17 @@ function say(text) {
   }, []);
   speechSynthesis.cancel();
   const voice = pickVoice();
+  S.speaking = true;
+  setBlobMode();
   chunks.forEach((c, i) => {
     const u = new SpeechSynthesisUtterance(c.trim());
     u.lang = settings.lang;
     u.rate = settings.rate;
     if (voice) u.voice = voice;
-    if (i === chunks.length - 1) u.onend = u.onerror = () => { $('speaking').hidden = true; };
+    u.onboundary = () => blob.pulse(0.45);
+    if (i === chunks.length - 1) u.onend = u.onerror = () => { S.speaking = false; setBlobMode(); };
     speechSynthesis.speak(u);
   });
-  $('speaking').hidden = false;
 }
 
 function speak(md) {
@@ -700,10 +701,30 @@ function speak(md) {
 
 function stopSpeaking() {
   if ('speechSynthesis' in window) speechSynthesis.cancel();
-  $('speaking').hidden = true;
+  S.speaking = false;
+  setBlobMode();
 }
-$('stopSpeakBtn').onclick = stopSpeaking;
-if ('speechSynthesis' in window) speechSynthesis.onvoiceschanged = () => {};
+
+function setBlobMode() {
+  blob.setMode(S.listening ? 'listening' : S.speaking ? 'speaking' : S.meta?.running ? 'working' : 'idle');
+}
+
+// Zvuk Zap / Vyp pod plochou
+function updateSeg() {
+  for (const b of $('soundSeg').querySelectorAll('button')) {
+    b.classList.toggle('on', (b.dataset.v === 'on') === (settings.speak === 'always'));
+  }
+}
+for (const b of $('soundSeg').querySelectorAll('button')) {
+  b.onclick = () => {
+    settings.speak = b.dataset.v === 'on' ? 'always' : 'never';
+    saveSettings();
+    updateSeg();
+    unlockAudio();
+    if (settings.speak === 'never') stopSpeaking();
+  };
+}
+updateSeg();
 
 // ======================================================== drobnosti
 
@@ -732,13 +753,13 @@ function toast(text, isError) {
   t.className = `toast${isError ? ' error' : ''}`;
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, isError ? 6000 : 3500);
+  toastTimer = setTimeout(() => { t.hidden = true; }, isError ? 6000 : 3000);
 }
 $('toast').onclick = () => { $('toast').hidden = true; };
 
-const isNearBottom = () => messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 140;
+const isNearBottom = () => body.scrollHeight - body.scrollTop - body.clientHeight < 80;
 function scrollBottom(instant) {
-  requestAnimationFrame(() => messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: instant ? 'auto' : 'smooth' }));
+  requestAnimationFrame(() => body.scrollTo({ top: body.scrollHeight, behavior: instant ? 'auto' : 'smooth' }));
 }
 
 function timeAgo(ts) {
@@ -784,13 +805,10 @@ function renderSessions() {
   }
 }
 
-// ---------------- nová konverzace (výběr složky)
-
-// Jedním klepnutím: nová konverzace ve stejné složce jako ta aktuální.
 function newQuick() {
   if ($('drawer').open) $('drawer').close();
   wsSend({ t: 'new', cwd: S.meta?.cwd || S.recent[0] || S.defaults.cwd });
-  inputEl.focus();
+  if (!isMobile) inputEl.focus();
 }
 $('newBtn').onclick = newQuick;
 $('newQuickBtn').onclick = newQuick;
@@ -843,13 +861,10 @@ $('startHereBtn').onclick = () => {
   if (wsSend({ t: 'new', cwd: S.browsePath })) $('newDlg').close();
 };
 
-// ---------------- nastavení
-
 $('settingsBtn').onclick = () => {
-  $('drawer').close();
+  if ($('drawer').open) $('drawer').close();
   $('setAsk').checked = S.mode !== 'bypassPermissions';
   $('setLang').value = settings.lang;
-  $('setSpeak').value = settings.speak;
   $('setRate').value = settings.rate;
   $('rateVal').textContent = `${Number(settings.rate).toFixed(2)}×`;
   $('setAutoSend').checked = settings.autoSend;
@@ -863,7 +878,6 @@ $('settingsBtn').onclick = () => {
 };
 $('setAsk').onchange = e => wsSend({ t: 'mode', mode: e.target.checked ? 'default' : 'bypassPermissions' });
 $('setLang').onchange = e => { settings.lang = e.target.value; saveSettings(); };
-$('setSpeak').onchange = e => { settings.speak = e.target.value; saveSettings(); };
 $('setRate').oninput = e => { settings.rate = Number(e.target.value); $('rateVal').textContent = `${settings.rate.toFixed(2)}×`; saveSettings(); };
 $('setRate').onchange = () => say('Takhle rychle budu číst odpovědi.');
 $('setAutoSend').onchange = e => { settings.autoSend = e.target.checked; saveSettings(); };
@@ -878,10 +892,8 @@ $('logoutBtn').onclick = () => {
   ws?.close();
   $('settingsDlg').close();
   history.replaceState(null, '', location.pathname);
-  showLogin('Odpojeno. Pro nové připojení naskenuj QR kód z terminálu na počítači.');
+  showLogin('Odpojeno. Pro nové připojení otevři odkaz z počítače.');
 };
-
-// ---------------- přihlášení
 
 $('tokenBtn').onclick = () => {
   const raw = $('tokenInput').value.trim();
@@ -896,7 +908,6 @@ $('tokenBtn').onclick = () => {
 
 // ======================================================== start
 
-// iOS: přizpůsobení výšky při otevřené klávesnici
 if (window.visualViewport) {
   const fit = () => document.documentElement.style.setProperty('--app-h', `${window.visualViewport.height}px`);
   window.visualViewport.addEventListener('resize', fit);
@@ -910,5 +921,7 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('online', () => { if (S.token && !S.ws) { S.retry = 0; connect(); } });
 setInterval(() => { if (S.ws?.readyState === 1) S.ws.send('{"t":"ping"}'); }, 25000);
 
+$('actIcon').innerHTML = ICON.mic;
+renderAll();
 S.token = readToken();
 if (S.token) connect(); else showLogin();
