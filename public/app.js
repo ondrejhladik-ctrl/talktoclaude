@@ -33,7 +33,7 @@ const PERM_TITLE = {
 
 const S = {
   token: null, ws: null, retry: 0, retryTimer: null,
-  sessions: [], recent: [], defaults: {}, hasQr: false, mode: 'bypassPermissions',
+  sessions: [], recent: [], defaults: {}, hasQr: false, link: null, mode: 'bypassPermissions',
   sid: store.get('sid', null), meta: null, events: [], nodes: new Map(), toolNodes: new Map(),
   liveText: '', liveRaf: 0,
   voiceDraft: false, queued: null, browsePath: null,
@@ -105,6 +105,7 @@ function handle(m) {
       S.recent = m.recent || [];
       S.defaults = m.defaults || {};
       S.hasQr = !!m.hasQr;
+      S.link = m.link || null;
       if (m.mode) S.mode = m.mode;
       renderSessions();
       if (S.sid && S.sessions.some(s => s.id === S.sid)) wsSend({ t: 'open', sid: S.sid });
@@ -117,6 +118,7 @@ function handle(m) {
       renderSessions();
       break;
     case 'meta': upsertMeta(m.session); break;
+    case 'link': S.link = m.link; S.hasQr = true; break;
     case 'mode':
       S.mode = m.mode;
       $('setAsk').checked = m.mode !== 'bypassPermissions';
@@ -170,7 +172,7 @@ function upsertMeta(meta, quiet) {
 
 function updateHeader() {
   const m = S.meta;
-  $('title').textContent = m ? m.title : 'TalkToClaude';
+  $('title').textContent = m ? m.title : 'Claude';
   if ($('conn').classList.contains('online')) {
     $('subText').textContent = m ? folderName(m.cwd) : `Připojeno k ${S.defaults.host || 'počítači'}`;
   }
@@ -234,7 +236,7 @@ function buildNode(ev) {
     case 'user': {
       const n = el('div', 'msg user');
       const b = el('div', 'bubble', ev.text);
-      if (ev.voice) b.appendChild(el('span', 'via', '🎤 diktováno'));
+      if (ev.voice) b.appendChild(el('span', 'via', 'nadiktováno'));
       n.appendChild(b);
       return n;
     }
@@ -496,7 +498,7 @@ function updateWorking() {
     const lastUser = [...S.events].reverse().find(e => e.k === 'user');
     const tick = () => {
       const s = lastUser ? Math.max(0, Math.round((Date.now() - lastUser.ts) / 1000)) : 0;
-      $('workingText').textContent = `Claude pracuje… ${s >= 3 ? fmtDur(s * 1000) : ''}`;
+      $('workingText').textContent = `Pracuju… ${s >= 3 ? fmtDur(s * 1000) : ''}`;
     };
     tick();
     workTimer = setInterval(tick, 1000);
@@ -522,11 +524,11 @@ function onTurnDone(ev) {
 function updateComposer() {
   const has = !!inputEl.value.trim();
   const running = !!S.meta?.running;
-  $('sendBtn').hidden = !has && running;
-  $('sendBtn').disabled = !has;
+  $('sendBtn').hidden = !has;
   $('stopBtn').hidden = has || !running;
+  document.body.classList.toggle('busy', running);
   const pending = S.events.some(e => e.k === 'perm' && e.status === 'pending');
-  inputEl.placeholder = pending ? 'Napiš nebo řekni, co má udělat jinak…' : 'Napiš nebo řekni, co má Claude udělat…';
+  inputEl.placeholder = pending ? 'Napiš nebo řekni, co udělat jinak…' : 'Napiš, nebo klepni na mikrofon…';
 }
 
 function autoGrow() {
@@ -613,19 +615,25 @@ function startListening() {
   };
   rec.onend = () => {
     rec = null;
-    $('micBtn').classList.remove('listening');
+    setListening(false);
     if (settings.autoSend && recFinal.trim() && inputEl.value.trim()) sendText();
   };
   try {
     rec.start();
-    $('micBtn').classList.add('listening');
+    setListening(true);
   } catch (err) {
     rec = null;
     toast(`Mikrofon nejde spustit: ${err.message}`, true);
   }
 }
 
-$('micBtn').onclick = () => { if (rec) rec.stop(); else startListening(); };
+function setListening(on) {
+  $('micBtn').classList.toggle('listening', on);
+  $('orbBtn').classList.toggle('listening', on);
+}
+const toggleMic = () => { if (rec) rec.stop(); else startListening(); };
+$('micBtn').onclick = toggleMic;
+$('orbBtn').onclick = toggleMic;
 
 // ======================================================== hlas – předčítání
 
@@ -837,7 +845,9 @@ $('settingsBtn').onclick = () => {
   $('setVibrate').checked = settings.vibrate;
   $('setWake').checked = settings.wakeLock;
   $('qrBox').hidden = !S.hasQr;
-  if (S.hasQr) $('qrImg').src = `/qr.svg?t=${encodeURIComponent(S.token)}`;
+  if (S.hasQr) $('qrImg').src = `/qr.svg?t=${encodeURIComponent(S.token)}&v=${Date.now()}`;
+  $('linkOut').hidden = !S.link;
+  if (S.link) { $('linkOut').href = S.link; $('linkOut').textContent = S.link.replace(/#.*/, ''); }
   $('settingsDlg').showModal();
 };
 $('setAsk').onchange = e => wsSend({ t: 'mode', mode: e.target.checked ? 'default' : 'bypassPermissions' });
