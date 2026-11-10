@@ -1,0 +1,13 @@
+{
+  "name": "Claude",
+  "short_name": "Claude",
+  "description": "Mluv s Claudem, který pracuje na tvém počítači.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0e0e0d",
+  "theme_color": "#0e0e0d",
+  "icons": [
+    { "src": "public/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

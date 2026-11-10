@@ -9,6 +9,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { spawn } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 import qrcode from 'qrcode-terminal';
 import selfsigned from 'selfsigned';
@@ -40,8 +41,8 @@ const PHONE_PROMPT = `Uživatel s tebou komunikuje přes mobilní aplikaci TalkT
 Přepis diktování může obsahovat chyby – zřejmý význam si domysli, u nejasností se zeptej.
 Odpovědi čte na malé obrazovce nebo je poslouchá předčítané nahlas: piš stručně a v jazyce uživatele,
 bez dlouhých výpisů kódu a širokých tabulek. Na konci práce shrň jednou-dvěma větami, co jsi udělal.
-Máš plnou důvěru uživatele a plný přístup k počítači. Jednej samostatně: úkoly dotahuj do konce,
-instaluj, spouštěj a upravuj, co je potřeba, a neptej se na zbytečná potvrzení. Ptej se jen tehdy,
+Jednej samostatně a úkoly dotahuj do konce. Schvalování příkazů a úprav souborů řeší aplikace sama
+(uživatel klepne na Povolit/Zamítnout), takže se na ně v textu zvlášť neptej. Ptej se jen tehdy,
 když opravdu nevíš, co uživatel chce.`;
 
 fs.mkdirSync(SESSIONS_DIR, { recursive: true });
@@ -53,14 +54,17 @@ function loadConfig() {
   let saved = {};
   try { saved = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch {}
   const defaults = {
-    port: 3443,            // HTTPS pro mobil (mikrofon v prohlížeči vyžaduje HTTPS)
+    localPort: 3080,       // aplikace na tomto PC: http://localhost:3080 (sem vede i tunel)
+    tunnel: true,          // zpřístupnit aplikaci z internetu přes Cloudflare Tunnel (bin/cloudflared.exe)
+    publish: true,         // uložit aktuální (šifrovanou) adresu tunelu do větve "tunnel" na GitHubu
+    lan: false,            // navíc HTTPS v domácí síti (port 3443) – už není potřeba
+    port: 3443,
     https: true,
     host: '0.0.0.0',
-    localPort: 3080,       // HTTP jen pro tento počítač (http://localhost:3080)
     token: crypto.randomBytes(16).toString('hex'),
     defaultCwd: path.dirname(ROOT),
     model: '',
-    mode: 'bypassPermissions', // Claude smí všechno bez ptaní; 'default' = ptát se před akcemi
+    mode: 'default',       // 'default' = ptát se v aplikaci před akcemi; 'bypassPermissions' = vše bez ptaní
   };
   const merged = { ...defaults, ...saved };
   if (Object.keys(defaults).some(k => !(k in saved))) {
@@ -89,10 +93,127 @@ function lanAddresses() {
   return out.sort((x, y) => virt(x.name) - virt(y.name) || rank(x.address) - rank(y.address));
 }
 
-function phoneUrl() {
-  const lan = lanAddresses()[0];
+function lanUrl() {
+  const lan = config.lan && lanAddresses()[0];
   const proto = config.https ? 'https' : 'http';
   return lan ? `${proto}://${lan.address}:${config.port}/#t=${config.token}` : null;
+}
+
+// ---------------------------------------------------------------- přístup z internetu
+// Cloudflare Tunnel dá PC veřejnou https adresu (*.trycloudflare.com), ta se ale při každém
+// spuštění mění. Proto ji server zašifruje tokenem a uloží do větve "tunnel" na GitHubu.
+// Stálá stránka na GitHub Pages ji odtud přečte, rozšifruje a přesměruje na ni.
+
+let tunnelUrl = null;      // https://xxx.trycloudflare.com
+let launcherBase = null;   // https://<uživatel>.github.io/<repo>/
+let published = false;
+let tunnelChild = null;
+let stopping = false;
+
+function publicLink() {
+  if (launcherBase && published) return `${launcherBase}#t=${config.token}`;
+  if (tunnelUrl) return `${tunnelUrl}/#t=${config.token}`;
+  return lanUrl();
+}
+
+function git(args, input) {
+  return new Promise((resolve, reject) => {
+    const p = spawn('git', args, { cwd: ROOT, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+    let out = '';
+    let err = '';
+    const timer = setTimeout(() => p.kill(), 60000);
+    p.stdout.on('data', d => { out += d; });
+    p.stderr.on('data', d => { err += d; });
+    p.on('error', e => { clearTimeout(timer); reject(e); });
+    p.on('close', code => {
+      clearTimeout(timer);
+      if (code === 0) resolve(out.trim()); else reject(new Error(err.trim() || `git ${args[0]} skončil s kódem ${code}`));
+    });
+    p.stdin.end(input ?? '');
+  });
+}
+
+async function detectLauncher() {
+  try {
+    const remote = await git(['remote', 'get-url', 'origin']);
+    const m = remote.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/i);
+    if (m) launcherBase = `https://${m[1].toLowerCase()}.github.io/${m[2]}/`;
+  } catch {}
+}
+
+async function publishTunnel(url) {
+  const key = crypto.createHash('sha256').update(config.token).digest();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const data = Buffer.concat([cipher.update(JSON.stringify({ url, ts: Date.now() })), cipher.final(), cipher.getAuthTag()]);
+  const body = `${JSON.stringify({ v: 1, iv: iv.toString('base64'), data: data.toString('base64') })}\n`;
+  const blob = await git(['hash-object', '-w', '--stdin'], body);
+  const tree = await git(['mktree'], `100644 blob ${blob}\ttunnel.json\n`);
+  const commit = await git(['commit-tree', tree, '-m', 'Aktuální adresa počítače (šifrovaná)']);
+  await git(['push', '--force', '--quiet', 'origin', `${commit}:refs/heads/tunnel`]);
+}
+
+function findCloudflared() {
+  const candidates = [
+    path.join(ROOT, 'bin', 'cloudflared.exe'),
+    path.join(ROOT, 'bin', 'cloudflared'),
+    'C:\\Program Files (x86)\\cloudflared\\cloudflared.exe',
+    'C:\\Program Files\\cloudflared\\cloudflared.exe',
+  ];
+  return candidates.find(p => fs.existsSync(p)) || null;
+}
+
+async function onTunnelUrl(url) {
+  tunnelUrl = url;
+  published = false;
+  console.log(`\n  Počítač je dostupný z internetu: ${url}`);
+  if (config.publish && launcherBase) {
+    try {
+      await publishTunnel(url);
+      published = true;
+    } catch (e) {
+      console.error(`  Adresu se nepodařilo uložit na GitHub (${errText(e)}). Použij přímý odkaz níže.`);
+    }
+  }
+  toAll({ t: 'link', link: publicLink() });
+  printLink();
+}
+
+function startTunnel() {
+  if (!config.tunnel || stopping) return;
+  const exe = findCloudflared();
+  if (!exe) {
+    console.log('  Přístup z internetu je vypnutý: chybí bin/cloudflared.exe.');
+    return;
+  }
+  const child = spawn(exe, ['tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${config.localPort}`], { windowsHide: true });
+  tunnelChild = child;
+  let buf = '';
+  const onData = d => {
+    buf = (buf + d).slice(-4000);
+    const m = buf.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
+    if (m && m[0] !== tunnelUrl) onTunnelUrl(m[0]);
+  };
+  child.stdout.on('data', onData);
+  child.stderr.on('data', onData);
+  child.on('error', e => console.error(`  Tunel nejde spustit: ${errText(e)}`));
+  child.on('exit', () => {
+    if (tunnelChild === child) tunnelChild = null;
+    tunnelUrl = null;
+    published = false;
+    if (!stopping) {
+      console.log('  Tunel spadl, za 5 s ho spustím znovu…');
+      setTimeout(startTunnel, 5000);
+    }
+  });
+}
+
+function printLink() {
+  const link = publicLink();
+  if (!link) return;
+  const stable = !!launcherBase && link.startsWith(launcherBase);
+  console.log(`\n  ${stable ? 'Tvůj stálý odkaz (funguje odkudkoliv, ulož si ho):' : 'Odkaz pro mobil:'}\n  ${link}\n`);
+  qrcode.generate(link, { small: true }, q => console.log(q.replace(/^/gm, '  ')));
 }
 
 async function getCert() {
@@ -559,8 +680,14 @@ async function handleHttp(req, res) {
     p = decodeURIComponent(url.pathname);
   } catch { res.writeHead(400).end(); return; }
 
+  if (p === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
+    res.end('{"ok":true}');
+    return;
+  }
+
   if (p === '/qr.svg') {
-    const link = phoneUrl();
+    const link = publicLink();
     if (!tokenOk(url.searchParams.get('t')) || !link) { res.writeHead(404).end(); return; }
     res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-store', ...SEC_HEADERS });
     res.end(qrSvg(link));
@@ -614,7 +741,7 @@ function onConnection(ws) {
     try { await handleMessage(ws, msg); } catch (e) { send(ws, { t: 'error', message: errText(e) }); }
   });
   send(ws, {
-    t: 'init', sessions: listMeta(), recent: recentDirs(), hasQr: !!phoneUrl(), mode: config.mode,
+    t: 'init', sessions: listMeta(), recent: recentDirs(), hasQr: !!publicLink(), link: publicLink(), mode: config.mode,
     defaults: { cwd: config.defaultCwd, host: os.hostname() },
   });
 }
@@ -687,18 +814,15 @@ function listen(server, port, host) {
 }
 
 async function main() {
-  const servers = [];
   try {
-    const tls = config.https ? await getCert() : null;
-    const main = tls ? https.createServer(tls, handleHttp) : http.createServer(handleHttp);
-    main.on('upgrade', onUpgrade);
-    await listen(main, config.port, config.host);
-    servers.push(main);
-    if (config.https && config.localPort) {
-      const local = http.createServer(handleHttp);
-      local.on('upgrade', onUpgrade);
-      await listen(local, config.localPort, '127.0.0.1');
-      servers.push(local);
+    const local = http.createServer(handleHttp);
+    local.on('upgrade', onUpgrade);
+    await listen(local, config.localPort, '127.0.0.1');
+    if (config.lan) {
+      const tls = config.https ? await getCert() : null;
+      const lan = tls ? https.createServer(tls, handleHttp) : http.createServer(handleHttp);
+      lan.on('upgrade', onUpgrade);
+      await listen(lan, config.port, config.host);
     }
   } catch (e) {
     if (e.code === 'EADDRINUSE') console.error(`\n  Port je obsazený – neběží už TalkToClaude v jiném okně? (port lze změnit v data/config.json)\n`);
@@ -706,23 +830,17 @@ async function main() {
     process.exit(1);
   }
 
-  const proto = config.https ? 'https' : 'http';
-  const t = `#t=${config.token}`;
-  console.log('\n  TalkToClaude běží ✔\n');
-  if (config.https && config.localPort) console.log(`  Na tomto PC:  http://localhost:${config.localPort}/${t}`);
-  else console.log(`  Na tomto PC:  ${proto}://localhost:${config.port}/${t}`);
-  for (const a of lanAddresses()) console.log(`  Z mobilu:     ${proto}://${a.address}:${config.port}/${t}   (${a.name})`);
-  const link = phoneUrl();
-  if (link) {
-    console.log('\n  Naskenuj QR kód telefonem (telefon musí být na stejné Wi-Fi):\n');
-    qrcode.generate(link, { small: true }, q => console.log(q.replace(/^/gm, '  ')));
-  }
-  if (config.https) console.log('\n  Mobil při prvním otevření varuje před certifikátem (je vlastní, ne veřejný) → Rozšířené → Pokračovat.');
-  console.log('  Pokud se mobil nepřipojí, povol Node.js ve Windows Firewallu pro soukromé sítě.');
-  console.log('  Ukončení: Ctrl+C\n');
+  console.log('\n  TalkToClaude běží ✔');
+  console.log(`  Na tomto PC: http://localhost:${config.localPort}/#t=${config.token}`);
+  console.log('  Nech toto okno otevřené. Ukončení: Ctrl+C');
+  await detectLauncher();
+  startTunnel();
+  if (!config.tunnel || !findCloudflared()) printLink();
 }
 
 function shutdown() {
+  stopping = true;
+  tunnelChild?.kill();
   for (const s of sessions.values()) { s.saveNow(); s.closeQuery(); }
   setTimeout(() => process.exit(0), 300);
 }

@@ -87,8 +87,18 @@ function connect() {
       return;
     }
     setConn('offline');
+    // Adresa tunelu se po restartu PC mění – po pár neúspěších přejdi na stálý odkaz, ten najde novou.
+    const launcher = store.get('launcher', null);
+    if (S.retry >= 3 && launcher && location.hostname.endsWith('.trycloudflare.com')) {
+      location.replace(launcher);
+      return;
+    }
     S.retryTimer = setTimeout(connect, Math.min(1000 * 2 ** S.retry++, 10000));
   };
+}
+
+function rememberLauncher(link) {
+  try { if (link && new URL(link).hostname.endsWith('.github.io')) store.set('launcher', link); } catch {}
 }
 
 function wsSend(m) {
@@ -106,6 +116,7 @@ function handle(m) {
       S.defaults = m.defaults || {};
       S.hasQr = !!m.hasQr;
       S.link = m.link || null;
+      rememberLauncher(S.link);
       if (m.mode) S.mode = m.mode;
       renderSessions();
       if (S.sid && S.sessions.some(s => s.id === S.sid)) wsSend({ t: 'open', sid: S.sid });
@@ -118,7 +129,7 @@ function handle(m) {
       renderSessions();
       break;
     case 'meta': upsertMeta(m.session); break;
-    case 'link': S.link = m.link; S.hasQr = true; break;
+    case 'link': S.link = m.link; S.hasQr = !!m.link; rememberLauncher(m.link); break;
     case 'mode':
       S.mode = m.mode;
       $('setAsk').checked = m.mode !== 'bypassPermissions';

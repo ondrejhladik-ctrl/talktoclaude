@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e0e0d" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Claude">
+<meta name="referrer" content="no-referrer">
+<title>Claude</title>
+<link rel="icon" href="public/icon.svg" type="image/svg+xml">
+<link rel="manifest" href="launcher.webmanifest">
+<!--
+  Stálý odkaz na aplikaci TalkToClaude.
+  Počítač při každém spuštění dostane novou adresu tunelu a uloží ji (zašifrovanou tokenem)
+  do větve "tunnel" tohoto repozitáře. Tahle stránka ji přečte, rozšifruje a přesměruje na ni.
+  Token je jen v části adresy za # – nikam se neodesílá.
+-->
+<style>
+  :root { --bg: #fff; --ink: #161615; --gray: #8e8e89; --soft: #f4f4f2; color-scheme: light dark; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0e0e0d; --ink: #ededeb; --gray: #8a8a85; --soft: #1d1d1c; } }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); }
+  body {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    padding: 24px; text-align: center;
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+    letter-spacing: -0.012em; -webkit-font-smoothing: antialiased;
+  }
+  .orb {
+    --s: 110px; position: relative; width: var(--s); height: var(--s); border-radius: 50%; margin-bottom: 10px;
+    background:
+      radial-gradient(60% 55% at 30% 22%, rgba(255,255,255,.95), rgba(255,255,255,0) 60%),
+      radial-gradient(70% 60% at 62% 82%, #11121a 0%, #262836 35%, rgba(38,40,54,0) 70%),
+      conic-gradient(from 210deg at 55% 55%, #f3f3f6, #a9abb8, #4b4d5e, #1f2029, #6f7182, #dcdde4, #f3f3f6);
+    box-shadow: inset -10px -14px 26px rgba(10,10,20,.55), inset 10px 12px 22px rgba(255,255,255,.85), 0 18px 40px rgba(20,20,40,.18);
+    animation: morph 2.6s ease-in-out infinite;
+  }
+  .orb::after {
+    content: ""; position: absolute; inset: 6%; border-radius: inherit;
+    background: conic-gradient(from 150deg, transparent 0 48%, #ff8a3d 53%, #ffd27a 56%, #5bc6ff 60%, #4a5dff 63%, transparent 68% 100%);
+    -webkit-mask: radial-gradient(closest-side, transparent 74%, #000 80%, #000 88%, transparent 96%);
+    mask: radial-gradient(closest-side, transparent 74%, #000 80%, #000 88%, transparent 96%);
+    filter: blur(1.5px); animation: spin 6s linear infinite;
+  }
+  .idle .orb { animation-duration: 9s; }
+  @keyframes morph {
+    0%, 100% { border-radius: 50% 47% 53% 50% / 49% 53% 47% 51%; transform: rotate(0) scale(1); }
+    33% { border-radius: 44% 56% 47% 53% / 56% 44% 56% 44%; transform: rotate(6deg) scale(1.03); }
+    66% { border-radius: 55% 45% 56% 44% / 46% 55% 45% 54%; transform: rotate(-5deg) scale(.98); }
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 { margin: 0; font-size: 17px; font-weight: 500; }
+  p { margin: 0; color: var(--gray); max-width: 340px; }
+  form { display: flex; flex-direction: column; gap: 10px; width: min(340px, 100%); margin-top: 6px; }
+  input { min-height: 48px; padding: 0 18px; border: 0; border-radius: 999px; background: var(--soft); color: var(--ink); font: inherit; font-size: 16px; }
+  button { min-height: 48px; border: 0; border-radius: 999px; background: var(--ink); color: var(--bg); font: inherit; font-weight: 500; cursor: pointer; }
+  [hidden] { display: none !important; }
+  @media (prefers-reduced-motion: reduce) { .orb, .orb::after { animation: none; } }
+</style>
+</head>
+<body>
+  <div class="orb"></div>
+  <h1 id="title">Připojuji se k tvému počítači…</h1>
+  <p id="msg">Chvilku strpení.</p>
+  <form id="form" hidden>
+    <input id="code" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Odkaz nebo kód z počítače">
+    <button>Připojit</button>
+  </form>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const KEY = 'ttc.token';
+  const store = {
+    get() { try { return localStorage.getItem(KEY); } catch { return null; } },
+    set(v) { try { localStorage.setItem(KEY, v); } catch {} },
+    del() { try { localStorage.removeItem(KEY); } catch {} },
+  };
+  const owner = location.hostname.split('.')[0];
+  const repo = location.pathname.split('/').filter(Boolean)[0] || '';
+  let token = new URLSearchParams(location.hash.slice(1)).get('t');
+  if (token) store.set(token); else token = store.get();
+
+  const say = (title, msg, idle) => {
+    $('title').textContent = title;
+    $('msg').textContent = msg || '';
+    document.body.classList.toggle('idle', !!idle);
+  };
+  const askCode = text => {
+    say('Připoj se ke svému počítači', text || 'Otevři odkaz, který ti ukázal počítač, nebo sem vlož odkaz či kód.', true);
+    $('form').hidden = false;
+  };
+  $('form').onsubmit = e => {
+    e.preventDefault();
+    const raw = $('code').value.trim();
+    if (!raw) return;
+    const m = raw.match(/[#?&]t=([0-9a-f]+)/i);
+    token = m ? m[1] : raw;
+    store.set(token);
+    $('form').hidden = true;
+    start();
+  };
+
+  const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+
+  async function readTunnelFile() {
+    const stamp = Date.now();
+    try {
+      const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/tunnel.json?ref=tunnel&_=${stamp}`,
+        { headers: { Accept: 'application/vnd.github.raw' }, cache: 'no-store' });
+      if (r.ok) return await r.text();
+    } catch {}
+    const r = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/tunnel/tunnel.json?_=${stamp}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error('missing');
+    return r.text();
+  }
+
+  async function decrypt(file) {
+    const j = JSON.parse(file);
+    const keyBytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+    const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['decrypt']);
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(j.iv) }, key, b64(j.data));
+    return JSON.parse(new TextDecoder().decode(plain));
+  }
+
+  async function alive(url) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      const r = await fetch(`${url}/health`, { cache: 'no-store', signal: ctrl.signal });
+      return r.ok;
+    } catch { return false; } finally { clearTimeout(timer); }
+  }
+
+  let tries = 0;
+  async function start() {
+    if (!token) return askCode();
+    if (!crypto.subtle) return say('Tenhle prohlížeč to neumí', 'Otevři odkaz v Chromu nebo Safari.', true);
+    say('Připojuji se k tvému počítači…', tries ? `Zkouším znovu (${tries})…` : 'Chvilku strpení.');
+    let info;
+    try {
+      info = await decrypt(await readTunnelFile());
+    } catch (e) {
+      if (e && e.name === 'OperationError') { store.del(); token = null; return askCode('Tenhle kód nepasuje. Otevři znovu odkaz z počítače.'); }
+      return retry('Počítač zatím neohlásil svou adresu. Je zapnutý a běží na něm TalkToClaude?');
+    }
+    if (await alive(info.url)) {
+      location.replace(`${info.url}/#t=${encodeURIComponent(token)}`);
+      return;
+    }
+    retry('Počítač je asi vypnutý, uspaný, nebo na něm neběží TalkToClaude.');
+  }
+
+  function retry(text) {
+    tries++;
+    say('Počítač teď není dostupný', `${text} Zkouším to znovu každých 10 sekund.`, true);
+    setTimeout(start, 10000);
+  }
+
+  start();
+})();
+</script>
+</body>
+</html>
