@@ -55,24 +55,24 @@ void main() {
   vec2 n = q / (halfSize * 2.0);          // zhruba -0.5 .. 0.5, y nahoru
 
   // --- základ: šedá vlevo nahoře, temně modrá vpravo
-  vec3 gray = vec3(0.34, 0.35, 0.39);
-  vec3 navy = vec3(0.11, 0.12, 0.21);
+  vec3 gray = vec3(0.90);
+  vec3 navy = vec3(0.74);
   vec3 col = mix(gray, navy, smoothstep(-0.2, 0.45, n.x + 0.3 * n.y + 0.06 * sin(t * 0.3)));
-  col = mix(col, vec3(0.6, 0.61, 0.66), smoothstep(0.15, 0.55, -n.x - 0.2 * n.y) * 0.45);
-  col *= mix(1.0, 0.8, smoothstep(0.1, 0.5, n.y));
+  col = mix(col, vec3(0.97), smoothstep(0.15, 0.55, -n.x - 0.2 * n.y) * 0.5);
+  col *= mix(1.0, 0.96, smoothstep(0.1, 0.5, n.y));
 
   // --- velká měkká bílá záře (vlevo dole / uprostřed)
   vec2 gp = vec2(-0.17 + 0.07 * sin(t * 0.31), -0.2 + 0.06 * cos(t * 0.23));
   vec2 gd = rot(-0.7 + 0.15 * sin(t * 0.2)) * (n - gp);
   gd *= vec2(0.9, 2.0);
   float glow = exp(-dot(gd, gd) / (0.042 + 0.02 * L));
-  col = mix(col, vec3(0.97, 0.975, 0.99), glow * 0.9);
+  col = mix(col, vec3(1.0), glow * 0.9);
 
   // --- teplý odlesk vpravo nahoře
   vec2 wp = vec2(0.2 + 0.05 * sin(t * 0.47), 0.32 + 0.04 * cos(t * 0.59));
   vec2 wd = (n - wp) * vec2(1.0, 1.9);
   float warm = exp(-dot(wd, wd) / (0.0045 + 0.005 * L));
-  col += vec3(0.82, 0.6, 0.32) * warm * (0.5 + 0.6 * L);
+  col = mix(col, vec3(0.62), warm * (0.35 + 0.4 * L));
 
   // --- tmavá kapsa vlevo dole s duhovým lomem
   vec2 pc = vec2(-0.21 + 0.05 * sin(t * 0.41), -0.42 + 0.025 * cos(t * 0.53));
@@ -82,17 +82,16 @@ void main() {
            - 0.03 * noise(vec2(pa * 1.7, t * 0.5)) - 0.012 * sin(pa * 3.0 + t * 0.9);
   float side = 0.45 + 0.55 * max(0.0, dot(normalize(pd + 1e-5), normalize(vec2(-0.55, 0.85))));
   float bw = 0.013;
-  col += vec3(1.0, 0.22, 0.08) * exp(-pow((pr - 0.034) / bw, 2.0)) * 0.85 * side;
-  col += vec3(1.0, 0.8, 0.3) * exp(-pow((pr - 0.021) / bw, 2.0)) * 0.55 * side;
-  col += vec3(1.0) * exp(-pow((pr - 0.01) / (bw * 0.9), 2.0)) * 0.75 * side;
-  col += vec3(0.25, 0.55, 1.0) * exp(-pow((pr + 0.002) / bw, 2.0)) * 0.85;
+  col = mix(col, vec3(0.55), exp(-pow((pr - 0.03) / bw, 2.0)) * 0.6 * side);
+  col = mix(col, vec3(1.0), exp(-pow((pr - 0.012) / (bw * 0.9), 2.0)) * 0.9 * side);
   float inside = smoothstep(0.004, -0.03, pr);
-  vec3 dark = mix(vec3(0.025, 0.03, 0.055), vec3(0.16, 0.17, 0.26), smoothstep(-0.16, 0.0, pr));
+  vec3 dark = mix(vec3(0.42), vec3(0.68), smoothstep(-0.16, 0.0, pr));
   col = mix(col, dark, inside);
 
   // --- jemné světlo podél okraje (sklo), bez obrysu
   float edge = exp(-pow(d / 0.025, 2.0));
-  col += vec3(1.0) * edge * (0.06 + 0.14 * smoothstep(0.3, -0.6, n.x + n.y));
+  col = mix(col, vec3(1.0), edge * (0.25 + 0.4 * smoothstep(0.3, -0.6, n.x + n.y)));
+  col = mix(col, vec3(0.6), exp(-pow((d + 0.004) / 0.006, 2.0)) * 0.35);
 
   gl_FragColor = vec4(col * mask, mask);
 }

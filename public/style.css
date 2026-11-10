@@ -250,3 +250,35 @@ dialog.drawer .dlg { height: 100%; }
 
 @keyframes blink { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* ===================================================== světlá černobílá varianta: černý text */
+.blob-shadow { background: rgba(0, 0, 0, .14); }
+.term { color: #111; text-shadow: 0 1px 0 rgba(255, 255, 255, .6); }
+.term-head { color: rgba(0, 0, 0, .55); }
+.dots i { background: rgba(0, 0, 0, .25); }
+.ln.cmd { color: #000; }
+.ln.cmd .ps, .ln.tail .ps { color: rgba(0, 0, 0, .4); }
+.ln.dim, .ln .dim { color: rgba(0, 0, 0, .5); }
+.ln.err { color: #a3200f; }
+.ln.ask { color: #000; text-decoration: underline; text-underline-offset: 3px; }
+.ln.sugg { color: rgba(0, 0, 0, .55); }
+.ln.sugg:hover { color: #000; }
+.ln.tool { color: rgba(0, 0, 0, .5); }
+.ln.tool.ok .st { color: #166b3a; }
+.ln.tool.bad .st { color: #a3200f; }
+.ln.detail { color: #222; background: rgba(0, 0, 0, .06); }
+.ln .del { color: #a3200f; }
+.ln .add { color: #166b3a; }
+.ln.tail { color: #000; }
+.cursor { background: #000; }
+.out { color: #111; }
+.md h3, .md h4, .md h5, .md h6, .md strong, .md a { color: #000; }
+.md code, .md pre.code { background: rgba(0, 0, 0, .07); }
+.md blockquote { border-left-color: rgba(0, 0, 0, .2); color: rgba(0, 0, 0, .6); }
+.md hr { border-top-color: rgba(0, 0, 0, .15); }
+.md th, .md td { border-bottom-color: rgba(0, 0, 0, .12); }
+.opt { color: #111; border-color: rgba(0, 0, 0, .2); background: rgba(255, 255, 255, .6); }
+.opt.sel { background: #111; color: #fff; }
+.pill { background: rgba(255, 255, 255, .75); border-color: rgba(0, 0, 0, .08); }
+.gbtn { background: linear-gradient(180deg, #fff, #e6e6e6) padding-box, linear-gradient(160deg, #d0d0d0, #fff, #9a9a9a) border-box; }
+.gbtn.listening { background: #111 padding-box, #111 border-box; color: #fff; }
