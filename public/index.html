@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#262624" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="TalkToClaude">
+<title>TalkToClaude</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<div id="app">
+  <header class="top">
+    <button id="menuBtn" class="icon-btn" aria-label="Konverzace">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span id="menuBadge" class="badge" hidden></span>
+    </button>
+    <div class="title-wrap">
+      <div id="title" class="title">TalkToClaude</div>
+      <div id="subtitle" class="subtitle"><span id="conn" class="conn"></span><span id="subText">Připojuji…</span></div>
+    </div>
+    <button id="newQuickBtn" class="icon-btn" aria-label="Nová konverzace">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+  </header>
+
+  <main id="messages" class="messages">
+    <div id="list"></div>
+    <div id="live" class="msg assistant md live" hidden></div>
+    <div id="working" class="working" hidden><span class="dots"><i></i><i></i><i></i></span><span id="workingText">Claude pracuje…</span></div>
+    <section id="empty" class="empty" hidden>
+      <div class="empty-icon"><img src="icon.svg" alt="" width="64" height="64"></div>
+      <h1>Co má Claude udělat?</h1>
+      <p>Napiš to, nebo klepni na mikrofon a řekni to.<br>Claude pracuje přímo na tvém počítači.</p>
+      <div id="emptyCwd" class="empty-cwd"></div>
+      <div class="suggestions">
+        <button class="sugg">Co je v téhle složce?</button>
+        <button class="sugg">Najdi v projektu chyby a navrhni opravy</button>
+        <button class="sugg">Shrň, na čem jsem naposledy pracoval</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="composer">
+    <div id="speaking" class="speaking" hidden>
+      <span>🔊 Předčítám odpověď</span><button id="stopSpeakBtn" class="link-btn">Ztlumit</button>
+    </div>
+    <div class="row">
+      <button id="micBtn" class="round mic" aria-label="Mluvit">
+        <svg viewBox="0 0 24 24" width="22" height="22"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+      </button>
+      <textarea id="input" rows="1" placeholder="Napiš nebo řekni, co má Claude udělat…" enterkeyhint="send"></textarea>
+      <button id="sendBtn" class="round send" aria-label="Odeslat" disabled>
+        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="stopBtn" class="round stop" aria-label="Zastavit" hidden>
+        <svg viewBox="0 0 24 24" width="18" height="18"><rect x="5" y="5" width="14" height="14" rx="2.5" fill="currentColor"/></svg>
+      </button>
+    </div>
+  </footer>
+</div>
+
+<section id="login" class="login" hidden>
+  <img src="icon.svg" alt="" width="72" height="72">
+  <h1>Připoj se k počítači</h1>
+  <p id="loginMsg">Na počítači spusť <b>start.bat</b> a naskenuj QR kód z terminálu, nebo sem vlož odkaz či token, který tam uvidíš.</p>
+  <input id="tokenInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://…/#t=… nebo token">
+  <button id="tokenBtn" class="btn primary">Připojit</button>
+</section>
+
+<dialog id="drawer" class="drawer">
+  <div class="dlg">
+    <div class="dlg-head"><h2>Konverzace</h2><button class="icon-btn" data-close aria-label="Zavřít">✕</button></div>
+    <button id="newBtn" class="btn primary wide">＋ Nová konverzace</button>
+    <button id="newFolderBtn" class="btn wide">📁 Nová v jiné složce</button>
+    <div id="sessList" class="sess-list"></div>
+    <button id="settingsBtn" class="btn wide">⚙ Nastavení</button>
+  </div>
+</dialog>
+
+<dialog id="newDlg" class="sheet">
+  <div class="dlg">
+    <div class="dlg-head"><h2>Nová konverzace</h2><button class="icon-btn" data-close aria-label="Zavřít">✕</button></div>
+    <p class="hint">Vyber složku, ve které bude Claude pracovat.</p>
+    <div id="recent" class="chips"></div>
+    <div id="cwdPath" class="cwd-path"></div>
+    <div id="dirList" class="dir-list"></div>
+    <button id="startHereBtn" class="btn primary wide">Začít v této složce</button>
+  </div>
+</dialog>
+
+<dialog id="settingsDlg" class="sheet">
+  <div class="dlg">
+    <div class="dlg-head"><h2>Nastavení</h2><button class="icon-btn" data-close aria-label="Zavřít">✕</button></div>
+    <label class="check"><input id="setAsk" type="checkbox"> Ptát se před příkazy a úpravami souborů</label>
+    <p class="hint">Vypnuto = Claude udělá na počítači cokoliv bez ptaní.</p>
+    <label class="field">Jazyk řeči
+      <select id="setLang">
+        <option value="cs-CZ">Čeština</option>
+        <option value="sk-SK">Slovenčina</option>
+        <option value="en-US">English</option>
+        <option value="de-DE">Deutsch</option>
+      </select>
+    </label>
+    <label class="field">Číst odpovědi nahlas
+      <select id="setSpeak">
+        <option value="voice">Jen když mluvím</option>
+        <option value="always">Vždy</option>
+        <option value="never">Nikdy</option>
+      </select>
+    </label>
+    <label class="field">Rychlost předčítání <span id="rateVal"></span>
+      <input id="setRate" type="range" min="0.7" max="1.6" step="0.05">
+    </label>
+    <label class="check"><input id="setAutoSend" type="checkbox"> Po dodiktování rovnou odeslat</label>
+    <label class="check"><input id="setVibrate" type="checkbox"> Zavibrovat, když je hotovo / chce povolení</label>
+    <label class="check"><input id="setWake" type="checkbox"> Nezhasínat displej, když Claude pracuje</label>
+    <div id="qrBox" class="qr-box" hidden>
+      <p class="hint">Připojit telefon – naskenuj:</p>
+      <img id="qrImg" alt="QR kód pro připojení telefonu" width="220" height="220">
+    </div>
+    <button id="logoutBtn" class="btn danger wide">Odpojit toto zařízení</button>
+  </div>
+</dialog>
+
+<div id="toast" class="toast" hidden></div>
+</body>
+</html>
