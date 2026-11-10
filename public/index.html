@@ -32,7 +32,7 @@
 
   <main id="messages" class="messages">
     <section id="empty" class="empty" hidden>
-      <button id="orbBtn" class="orb-btn" aria-label="Klepni a mluv"><span class="orb"></span></button>
+      <button id="orbBtn" class="orb-btn" aria-label="Klepni a mluv"><span class="orb-wrap"><span class="orb-core"></span><span class="orb"></span></span></button>
       <p class="hello">Ahoj, tady Claude.<br><span>Řekni mi, co mám na počítači udělat.</span></p>
       <div class="suggestions">
         <button class="sugg">Co je v téhle složce?</button>
@@ -43,7 +43,7 @@
     </section>
     <div id="list"></div>
     <div id="live" class="msg assistant md live" hidden></div>
-    <div id="working" class="working" hidden><span class="orb tiny"></span><span id="workingText">Pracuju…</span></div>
+    <div id="working" class="working" hidden><span class="tiny-wrap"><span class="orb-core"></span><span class="orb tiny"></span></span><span id="workingText">Pracuju…</span></div>
   </main>
 
   <footer class="composer">
@@ -66,7 +66,7 @@
 </div>
 
 <section id="login" class="login" hidden>
-  <span class="orb"></span>
+  <div class="orb-wrap"><span class="orb-core"></span><span class="orb"></span></div>
   <h1>Připoj se ke svému počítači</h1>
   <p id="loginMsg">Otevři odkaz, který ti ukázal počítač, nebo sem vlož odkaz či kód.</p>
   <input id="tokenInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Odkaz nebo kód">

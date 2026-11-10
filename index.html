@@ -29,23 +29,44 @@
     font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
     letter-spacing: -0.012em; -webkit-font-smoothing: antialiased;
   }
-  .orb {
-    --s: 110px; position: relative; width: var(--s); height: var(--s); border-radius: 50%; margin-bottom: 10px;
+  body::before {
+    content: ""; position: fixed; inset: -25%; z-index: -1; pointer-events: none;
     background:
-      radial-gradient(60% 55% at 30% 22%, rgba(255,255,255,.95), rgba(255,255,255,0) 60%),
-      radial-gradient(70% 60% at 62% 82%, #11121a 0%, #262836 35%, rgba(38,40,54,0) 70%),
-      conic-gradient(from 210deg at 55% 55%, #f3f3f6, #a9abb8, #4b4d5e, #1f2029, #6f7182, #dcdde4, #f3f3f6);
-    box-shadow: inset -10px -14px 26px rgba(10,10,20,.55), inset 10px 12px 22px rgba(255,255,255,.85), 0 18px 40px rgba(20,20,40,.18);
+      radial-gradient(32% 28% at 22% 22%, rgba(255,120,60,.30), transparent 70%),
+      radial-gradient(30% 34% at 82% 30%, rgba(95,110,255,.32), transparent 70%),
+      radial-gradient(40% 32% at 48% 88%, rgba(45,195,170,.22), transparent 70%);
+    filter: blur(30px);
+  }
+  .orb-wrap { position: relative; display: grid; place-items: center; margin-bottom: 10px; }
+  .orb-core {
+    position: absolute; inset: 15%; border-radius: 50%;
+    background:
+      radial-gradient(circle at 30% 35%, rgba(255,130,70,.95), transparent 55%),
+      radial-gradient(circle at 70% 40%, rgba(100,120,255,.95), transparent 55%),
+      radial-gradient(circle at 50% 75%, rgba(60,210,185,.85), transparent 55%);
+    filter: blur(14px); animation: swirl 3s ease-in-out infinite;
+  }
+  .orb {
+    --s: 116px; position: relative; width: var(--s); height: var(--s); border-radius: 50%;
+    background:
+      radial-gradient(38% 26% at 34% 22%, rgba(255,255,255,.95), rgba(255,255,255,0) 72%),
+      radial-gradient(22% 14% at 70% 80%, rgba(255,255,255,.55), rgba(255,255,255,0) 80%),
+      radial-gradient(closest-side, rgba(255,255,255,.02) 62%, rgba(255,255,255,.16) 88%, rgba(255,255,255,.55) 100%);
+    -webkit-backdrop-filter: blur(3px) saturate(220%) brightness(1.08);
+    backdrop-filter: blur(3px) saturate(220%) brightness(1.08);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.45), inset 0 12px 22px rgba(255,255,255,.28), inset 0 -16px 28px rgba(255,255,255,.12), 0 24px 50px rgba(20,24,50,.22);
     animation: morph 2.6s ease-in-out infinite;
   }
   .orb::after {
-    content: ""; position: absolute; inset: 6%; border-radius: inherit;
-    background: conic-gradient(from 150deg, transparent 0 48%, #ff8a3d 53%, #ffd27a 56%, #5bc6ff 60%, #4a5dff 63%, transparent 68% 100%);
-    -webkit-mask: radial-gradient(closest-side, transparent 74%, #000 80%, #000 88%, transparent 96%);
-    mask: radial-gradient(closest-side, transparent 74%, #000 80%, #000 88%, transparent 96%);
-    filter: blur(1.5px); animation: spin 6s linear infinite;
+    content: ""; position: absolute; inset: 0; border-radius: inherit;
+    background: conic-gradient(from 140deg, transparent 0 40%, rgba(255,140,70,.9) 46%, rgba(255,220,120,.9) 50%, rgba(90,200,255,.9) 55%, rgba(110,100,255,.85) 59%, transparent 66% 100%);
+    -webkit-mask: radial-gradient(closest-side, transparent 84%, #000 92%, #000 97%, transparent 100%);
+    mask: radial-gradient(closest-side, transparent 84%, #000 92%, #000 97%, transparent 100%);
+    filter: blur(1.2px); mix-blend-mode: screen; animation: spin 6s linear infinite;
   }
   .idle .orb { animation-duration: 9s; }
+  .idle .orb-core { animation-duration: 10s; }
+  @keyframes swirl { 0%, 100% { transform: rotate(0) scale(1); } 50% { transform: rotate(180deg) scale(1.15); } }
   @keyframes morph {
     0%, 100% { border-radius: 50% 47% 53% 50% / 49% 53% 47% 51%; transform: rotate(0) scale(1); }
     33% { border-radius: 44% 56% 47% 53% / 56% 44% 56% 44%; transform: rotate(6deg) scale(1.03); }
@@ -55,14 +76,19 @@
   h1 { margin: 0; font-size: 17px; font-weight: 500; }
   p { margin: 0; color: var(--gray); max-width: 340px; }
   form { display: flex; flex-direction: column; gap: 10px; width: min(340px, 100%); margin-top: 6px; }
-  input { min-height: 48px; padding: 0 18px; border: 0; border-radius: 999px; background: var(--soft); color: var(--ink); font: inherit; font-size: 16px; }
+  input {
+    min-height: 48px; padding: 0 18px; border-radius: 999px; color: var(--ink); font: inherit; font-size: 16px; outline: none;
+    border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.08);
+    -webkit-backdrop-filter: blur(22px) saturate(190%); backdrop-filter: blur(22px) saturate(190%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.3);
+  }
   button { min-height: 48px; border: 0; border-radius: 999px; background: var(--ink); color: var(--bg); font: inherit; font-weight: 500; cursor: pointer; }
   [hidden] { display: none !important; }
   @media (prefers-reduced-motion: reduce) { .orb, .orb::after { animation: none; } }
 </style>
 </head>
 <body>
-  <div class="orb"></div>
+  <div class="orb-wrap"><div class="orb-core"></div><div class="orb"></div></div>
   <h1 id="title">Připojuji se k tvému počítači…</h1>
   <p id="msg">Chvilku strpení.</p>
   <form id="form" hidden>

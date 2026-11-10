@@ -163,8 +163,27 @@ function findCloudflared() {
   return candidates.find(p => fs.existsSync(p)) || null;
 }
 
+// Hlídání tunelu: když přestane odpovídat (např. PC změnilo síť a Cloudflare adresu zrušil),
+// ukonči cloudflared – spustí se znovu, dostane novou adresu a ta se znovu uloží na GitHub.
+let tunnelSince = 0;
+let tunnelFails = 0;
+setInterval(async () => {
+  if (!tunnelUrl || !tunnelChild || Date.now() - tunnelSince < 60000) return;
+  try {
+    const r = await fetch(`${tunnelUrl}/health`, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+    if (r.ok) { tunnelFails = 0; return; }
+  } catch {}
+  if (++tunnelFails >= 3) {
+    console.log('  Tunel přestal odpovídat – spouštím nový…');
+    tunnelFails = 0;
+    tunnelChild.kill();
+  }
+}, 30000).unref();
+
 async function onTunnelUrl(url) {
   tunnelUrl = url;
+  tunnelSince = Date.now();
+  tunnelFails = 0;
   published = false;
   console.log(`\n  Počítač je dostupný z internetu: ${url}`);
   if (config.publish && launcherBase) {
