@@ -1,20 +1,26 @@
 {
   "name": "talktoclaude",
   "version": "0.1.0",
-  "description": "Mluv z mobilu s Claude Code, který pracuje na tvém PC",
+  "description": "Mluv z mobilu s Claude Code na svém PC – hlasový asistent, rychlé povely a hlídání důležitých zpráv",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test \"test/*.test.js\""
   },
   "type": "module",
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.319",
+    "imapflow": "^2.11.0",
+    "mailparser": "^3.14.3",
+    "node-ical": "^0.27.6",
     "qrcode-terminal": "^0.12.0",
     "selfsigned": "^5.5.0",
-    "ws": "^8.22.1"
+    "web-push": "^4.0.0",
+    "ws": "^8.22.1",
+    "zod": "^4.6.7"
   },
   "private": true,
   "engines": {
-    "node": ">=18.14"
+    "node": ">=20"
   }
 }

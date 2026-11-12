@@ -2,191 +2,337 @@
 <html lang="cs">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0e0e0d" media="(prefers-color-scheme: dark)">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<!--
+  TalkToClaude – celá aplikace je statická (tahle stránka + složka public/), takže se otevře i bez počítače:
+  z GitHub Pages, z plochy telefonu i bez internetu. K počítači se připojuje sama přes WebSocket.
+  Počítač při každém spuštění uloží svou (tokenem zašifrovanou) adresu do větve "tunnel" tohoto repozitáře,
+  aplikace ji odtud přečte a připojí se. Token je jen v části adresy za # – nikam se neodesílá.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' ws: wss: https://*.trycloudflare.com https://api.github.com https://raw.githubusercontent.com http://localhost:* http://127.0.0.1:*; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#ffffff">
+<meta name="color-scheme" content="light">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Claude">
-<meta name="referrer" content="no-referrer">
 <title>Claude</title>
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="public/icon.svg" type="image/svg+xml">
-<link rel="manifest" href="launcher.webmanifest">
-<!--
-  Stálý odkaz na aplikaci TalkToClaude.
-  Počítač při každém spuštění dostane novou adresu tunelu a uloží ji (zašifrovanou tokenem)
-  do větve "tunnel" tohoto repozitáře. Tahle stránka ji přečte, rozšifruje a přesměruje na ni.
-  Token je jen v části adresy za # – nikam se neodesílá.
--->
-<style>
-  :root { --bg: #fff; --ink: #161615; --gray: #8e8e89; --soft: #f4f4f2; color-scheme: light dark; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #0e0e0d; --ink: #ededeb; --gray: #8a8a85; --soft: #1d1d1c; } }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); }
-  body {
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
-    padding: 24px; text-align: center;
-    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
-    letter-spacing: -0.012em; -webkit-font-smoothing: antialiased;
-  }
-  body::before {
-    content: ""; position: fixed; inset: -25%; z-index: -1; pointer-events: none;
-    background:
-      radial-gradient(32% 28% at 22% 22%, rgba(255,120,60,.30), transparent 70%),
-      radial-gradient(30% 34% at 82% 30%, rgba(95,110,255,.32), transparent 70%),
-      radial-gradient(40% 32% at 48% 88%, rgba(45,195,170,.22), transparent 70%);
-    filter: blur(30px);
-  }
-  .orb-wrap { position: relative; display: grid; place-items: center; margin-bottom: 10px; }
-  .orb-core {
-    position: absolute; inset: 15%; border-radius: 50%;
-    background:
-      radial-gradient(circle at 30% 35%, rgba(255,130,70,.95), transparent 55%),
-      radial-gradient(circle at 70% 40%, rgba(100,120,255,.95), transparent 55%),
-      radial-gradient(circle at 50% 75%, rgba(60,210,185,.85), transparent 55%);
-    filter: blur(14px); animation: swirl 3s ease-in-out infinite;
-  }
-  .orb {
-    --s: 116px; position: relative; width: var(--s); height: var(--s); border-radius: 50%;
-    background:
-      radial-gradient(38% 26% at 34% 22%, rgba(255,255,255,.95), rgba(255,255,255,0) 72%),
-      radial-gradient(22% 14% at 70% 80%, rgba(255,255,255,.55), rgba(255,255,255,0) 80%),
-      radial-gradient(closest-side, rgba(255,255,255,.02) 62%, rgba(255,255,255,.16) 88%, rgba(255,255,255,.55) 100%);
-    -webkit-backdrop-filter: blur(3px) saturate(220%) brightness(1.08);
-    backdrop-filter: blur(3px) saturate(220%) brightness(1.08);
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,.45), inset 0 12px 22px rgba(255,255,255,.28), inset 0 -16px 28px rgba(255,255,255,.12), 0 24px 50px rgba(20,24,50,.22);
-    animation: morph 2.6s ease-in-out infinite;
-  }
-  .orb::after {
-    content: ""; position: absolute; inset: 0; border-radius: inherit;
-    background: conic-gradient(from 140deg, transparent 0 40%, rgba(255,140,70,.9) 46%, rgba(255,220,120,.9) 50%, rgba(90,200,255,.9) 55%, rgba(110,100,255,.85) 59%, transparent 66% 100%);
-    -webkit-mask: radial-gradient(closest-side, transparent 84%, #000 92%, #000 97%, transparent 100%);
-    mask: radial-gradient(closest-side, transparent 84%, #000 92%, #000 97%, transparent 100%);
-    filter: blur(1.2px); mix-blend-mode: screen; animation: spin 6s linear infinite;
-  }
-  .idle .orb { animation-duration: 9s; }
-  .idle .orb-core { animation-duration: 10s; }
-  @keyframes swirl { 0%, 100% { transform: rotate(0) scale(1); } 50% { transform: rotate(180deg) scale(1.15); } }
-  @keyframes morph {
-    0%, 100% { border-radius: 50% 47% 53% 50% / 49% 53% 47% 51%; transform: rotate(0) scale(1); }
-    33% { border-radius: 44% 56% 47% 53% / 56% 44% 56% 44%; transform: rotate(6deg) scale(1.03); }
-    66% { border-radius: 55% 45% 56% 44% / 46% 55% 45% 54%; transform: rotate(-5deg) scale(.98); }
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  h1 { margin: 0; font-size: 17px; font-weight: 500; }
-  p { margin: 0; color: var(--gray); max-width: 340px; }
-  form { display: flex; flex-direction: column; gap: 10px; width: min(340px, 100%); margin-top: 6px; }
-  input {
-    min-height: 48px; padding: 0 18px; border-radius: 999px; color: var(--ink); font: inherit; font-size: 16px; outline: none;
-    border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.08);
-    -webkit-backdrop-filter: blur(22px) saturate(190%); backdrop-filter: blur(22px) saturate(190%);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.3);
-  }
-  button { min-height: 48px; border: 0; border-radius: 999px; background: var(--ink); color: var(--bg); font: inherit; font-weight: 500; cursor: pointer; }
-  [hidden] { display: none !important; }
-  @media (prefers-reduced-motion: reduce) { .orb, .orb::after { animation: none; } }
-</style>
+<link rel="apple-touch-icon" href="public/icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="public/style.css">
+<script type="module" src="public/app.js"></script>
 </head>
 <body>
-  <div class="orb-wrap"><div class="orb-core"></div><div class="orb"></div></div>
-  <h1 id="title">Připojuji se k tvému počítači…</h1>
-  <p id="msg">Chvilku strpení.</p>
-  <form id="form" hidden>
-    <input id="code" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Odkaz nebo kód z počítače">
-    <button>Připojit</button>
-  </form>
-<script>
-(() => {
-  const $ = id => document.getElementById(id);
-  const KEY = 'ttc.token';
-  const store = {
-    get() { try { return localStorage.getItem(KEY); } catch { return null; } },
-    set(v) { try { localStorage.setItem(KEY, v); } catch {} },
-    del() { try { localStorage.removeItem(KEY); } catch {} },
-  };
-  const owner = location.hostname.split('.')[0];
-  const repo = location.pathname.split('/').filter(Boolean)[0] || '';
-  let token = new URLSearchParams(location.hash.slice(1)).get('t');
-  if (token) store.set(token); else token = store.get();
+<div id="app" class="stage">
+  <div class="top">
+    <button id="pcChip" class="chip" title="Stav počítače"><i id="pcDot" class="dot connecting"></i><span id="pcLabel">Počítač</span></button>
+    <div id="autoSeg" class="seg" role="group" aria-label="Automaticky">
+      <span class="seg-label">
+        <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M13.2 2.5 5 13.4h5.6l-1 8.1 8.4-11.2h-5.7l.9-7.8z" fill="currentColor"/></svg>
+        Automaticky
+      </span>
+      <button data-v="on">Zap</button>
+      <button data-v="off">Vyp</button>
+    </div>
+  </div>
+  
+  <!-- Průvodce prvním nastavením -->
+  <div id="setupGuide" class="setup-guide" hidden>
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z" fill="currentColor"/></svg>
+    <span id="setupText">Pro plné funkce <strong>zapni hlídání e-mailů a push upozornění</strong>.</span>
+    <button id="setupBtn" class="btn small primary">Nastavit teď</button>
+  </div>
 
-  const say = (title, msg, idle) => {
-    $('title').textContent = title;
-    $('msg').textContent = msg || '';
-    document.body.classList.toggle('idle', !!idle);
-  };
-  const askCode = text => {
-    say('Připoj se ke svému počítači', text || 'Otevři odkaz, který ti ukázal počítač, nebo sem vlož odkaz či kód.', true);
-    $('form').hidden = false;
-  };
-  $('form').onsubmit = e => {
-    e.preventDefault();
-    const raw = $('code').value.trim();
-    if (!raw) return;
-    const m = raw.match(/[#?&]t=([0-9a-f]+)/i);
-    token = m ? m[1] : raw;
-    store.set(token);
-    $('form').hidden = true;
-    start();
-  };
+  <div class="blob-area">
+    <div id="blob" class="blob">
+      <canvas id="blobCanvas" aria-hidden="true"></canvas>
 
-  const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+      <div class="term">
+        <div class="term-head">
+          <span class="dots"><i id="conn" class="conn"></i><i></i><i></i></span>
+          <span id="tHead">claude ~</span>
+        </div>
+        <div id="tBody" class="term-body" aria-live="polite">
+          <div id="lines"></div>
+          <div id="tLive" class="ln out md" hidden></div>
+          <div id="tTail" class="ln tail"></div>
+        </div>
+      </div>
 
-  async function readTunnelFile() {
-    const stamp = Date.now();
-    try {
-      const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/tunnel.json?ref=tunnel&_=${stamp}`,
-        { headers: { Accept: 'application/vnd.github.raw' }, cache: 'no-store' });
-      if (r.ok) return await r.text();
-    } catch {}
-    const r = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/tunnel/tunnel.json?_=${stamp}`, { cache: 'no-store' });
-    if (!r.ok) throw new Error('missing');
-    return r.text();
-  }
+      <div id="pill" class="pill">
+        <div id="pillInput" class="pill-row">
+          <textarea id="input" rows="1" placeholder="Řekni nebo napiš…" enterkeyhint="send"></textarea>
+          <button id="actBtn" class="gbtn"><span id="actLabel">Mluv</span><span id="actIcon" class="ico"></span></button>
+        </div>
+        <div id="pillChoice" class="pill-row choice" hidden>
+          <span id="choiceLabel" class="choice-label">Povolit?</span>
+          <button id="noBtn" class="gbtn ghost">Ne</button>
+          <button id="alwaysBtn" class="gbtn ghost">Vždy</button>
+          <button id="yesBtn" class="gbtn">Povolit <span class="ico">⏎</span></button>
+        </div>
+        <div id="pillAction" class="pill-row choice" hidden>
+          <span id="actionLabel" class="choice-label"></span>
+          <button id="actionNo" class="gbtn ghost">Zrušit</button>
+          <a id="actionGo" class="gbtn" target="_blank" rel="noopener noreferrer">Otevřít <span class="ico">↗</span></a>
+        </div>
+      </div>
+    </div>
+    <div class="blob-shadow"></div>
+  </div>
 
-  async function decrypt(file) {
-    const j = JSON.parse(file);
-    const keyBytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
-    const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['decrypt']);
-    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(j.iv) }, key, b64(j.data));
-    return JSON.parse(new TextDecoder().decode(plain));
-  }
+  <div class="under">
+    <div id="soundSeg" class="seg" role="group" aria-label="Zvuk">
+      <span class="seg-label">
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 0 1 0 6" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+        Zvuk
+      </span>
+      <button data-v="on">Zap</button>
+      <button data-v="off">Vyp</button>
+    </div>
+    <nav class="links">
+      <button id="menuBtn">Konverzace<span id="menuBadge" class="badge" hidden></span></button>
+      <span>·</span>
+      <button id="newQuickBtn">Nová</button>
+      <span>·</span>
+      <button id="inboxBtn">Přehled<span id="inboxBadge" class="badge" hidden></span></button>
+      <span>·</span>
+      <button id="settingsBtn">Nastavení</button>
+    </nav>
+  </div>
+</div>
 
-  async function alive(url) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 8000);
-    try {
-      const r = await fetch(`${url}/health`, { cache: 'no-store', signal: ctrl.signal });
-      return r.ok;
-    } catch { return false; } finally { clearTimeout(timer); }
-  }
+<section id="login" class="login" hidden>
+  <h1>Připoj se ke svému počítači</h1>
+  <p id="loginMsg">Otevři odkaz, který ti ukázal počítač, nebo sem vlož odkaz či kód.</p>
+  <input id="tokenInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Odkaz nebo kód">
+  <button id="tokenBtn" class="btn primary">Připojit</button>
+</section>
 
-  let tries = 0;
-  async function start() {
-    if (!token) return askCode();
-    if (!crypto.subtle) return say('Tenhle prohlížeč to neumí', 'Otevři odkaz v Chromu nebo Safari.', true);
-    say('Připojuji se k tvému počítači…', tries ? `Zkouším znovu (${tries})…` : 'Chvilku strpení.');
-    let info;
-    try {
-      info = await decrypt(await readTunnelFile());
-    } catch (e) {
-      if (e && e.name === 'OperationError') { store.del(); token = null; return askCode('Tenhle kód nepasuje. Otevři znovu odkaz z počítače.'); }
-      return retry('Počítač zatím neohlásil svou adresu. Je zapnutý a běží na něm TalkToClaude?');
-    }
-    if (await alive(info.url)) {
-      location.replace(`${info.url}/#t=${encodeURIComponent(token)}`);
-      return;
-    }
-    retry('Počítač je asi vypnutý, uspaný, nebo na něm neběží TalkToClaude.');
-  }
+<!-- „Hovor“: aplikace volá s něčím důležitým -->
+<dialog id="call" class="call" aria-labelledby="callTitle">
+  <div id="callRing" class="call-ring"><i></i><i></i><i></i></div>
+  <div id="callKind" class="call-kind">Claude volá</div>
+  <h2 id="callTitle"></h2>
+  <p id="callText"></p>
+  <div class="call-btns">
+    <button id="callClose" class="btn">Zavřít</button>
+    <button id="callListen" class="btn primary">Poslechnout</button>
+  </div>
+</dialog>
 
-  function retry(text) {
-    tries++;
-    say('Počítač teď není dostupný', `${text} Zkouším to znovu každých 10 sekund.`, true);
-    setTimeout(start, 10000);
-  }
+<dialog id="drawer" class="drawer">
+  <div class="dlg">
+    <div class="dlg-head"><h2>Konverzace</h2><button class="x" data-close aria-label="Zavřít">✕</button></div>
+    <button id="newBtn" class="btn primary wide">Nová konverzace</button>
+    <button id="newFolderBtn" class="btn wide">Nová v jiné složce</button>
+    <div id="sessList" class="sess-list"></div>
+  </div>
+</dialog>
 
-  start();
-})();
-</script>
+<dialog id="newDlg" class="sheet">
+  <div class="dlg">
+    <div class="dlg-head"><h2>Vyber složku</h2><button class="x" data-close aria-label="Zavřít">✕</button></div>
+    <div id="recent" class="chips"></div>
+    <div id="cwdPath" class="cwd-path"></div>
+    <div id="dirList" class="dir-list"></div>
+    <button id="startHereBtn" class="btn primary wide">Začít tady</button>
+  </div>
+</dialog>
+
+<dialog id="inboxDlg" class="sheet">
+  <div class="dlg">
+    <div class="dlg-head"><h2>Přehled</h2><button class="x" data-close aria-label="Zavřít">✕</button></div>
+    <p id="inboxState" class="hint"></p>
+    <div class="chips">
+      <button id="snooze60">Nerušit 1 h</button>
+      <button id="snooze240">Nerušit 4 h</button>
+      <button id="snoozeOff" hidden>Zrušit nerušit</button>
+      <button id="inboxOnlyBtn">Jen důležité</button>
+    </div>
+    <div id="inboxList" class="inbox-list"></div>
+    <button id="inboxClearBtn" class="btn wide">Vymazat přehled</button>
+  </div>
+</dialog>
+
+<dialog id="settingsDlg" class="sheet">
+  <div class="dlg">
+    <div class="dlg-head"><h2>Nastavení</h2><button class="x" data-close aria-label="Zavřít">✕</button></div>
+    <div id="qrBox" class="qr-box" hidden>
+      <img id="qrImg" alt="QR kód s odkazem na tuto aplikaci" width="180" height="180">
+      <p class="hint">Tvůj odkaz – naskenuj mobilem a ulož si ho na plochu.</p>
+      <a id="linkOut" class="link-out" target="_blank" rel="noopener noreferrer"></a>
+    </div>
+    <button id="prioBtn" class="row-nav"><span>Priority a hlídání<small>Co je důležité, kdy upozornit a kdy zavolat</small></span><b>›</b></button>
+    <button id="peopleBtn" class="row-nav"><span>Lidé<small>Kontakty pro zprávy a hovory, důležití lidé</small></span><b>›</b></button>
+    <button id="helpBtn" class="row-nav"><span>Co umím<small>Rychlé povely, které nestojí žádné kredity</small></span><b>›</b></button>
+    <div class="row-set"><span>Upozornění v telefonu<small id="pushState">Zatím vypnutá</small></span><button id="pushBtn" class="btn small">Zapnout</button></div>
+    <label class="row-set"><span>Model pro rychlé úkoly<small>Asistent – zprávy, kalendář, připomínky</small></span>
+      <select id="setQuickModel">
+        <option value="claude-haiku-5-5">Haiku 5.5 · nejlevnější</option>
+        <option value="claude-sonnet-5-5">Sonnet 5.5</option>
+        <option value="claude-opus-5-5">Opus 5.5</option>
+        <option value="">Výchozí Claude Code</option>
+      </select>
+    </label>
+    <label class="row-set"><span>Záloha: Mistral AI<small>Když Claudovi dojdou kredity, odpovídá Mistral</small></span><input id="setMistralOn" type="checkbox" class="switch"></label>
+    <div id="mistralBox" class="box">
+      <label class="field"><span>API klíč <small id="setMistralNote"></small></span><input id="setMistralKey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="klíč z console.mistral.ai"></label>
+      <label class="row-set"><span>Model</span>
+        <select id="setMistralModel">
+          <option value="mistral-small-latest">Small · nejlevnější</option>
+          <option value="mistral-medium-latest">Medium</option>
+          <option value="mistral-large-latest">Large · nejchytřejší</option>
+        </select>
+      </label>
+      <p id="mistralHint" class="hint">Klíč vytvoříš na console.mistral.ai → API Keys. Mistral zvládne zprávy, kalendář, připomínky a otázky; programování počká na Clauda.</p>
+      <button id="mistralSave" class="btn wide">Uložit a vyzkoušet</button>
+    </div>
+    <label class="row-set"><span>Kalendář v telefonu<small>Po zapsání události nabídnout i kalendář mobilu</small></span>
+      <select id="setCalPhone">
+        <option value="auto">Automaticky</option>
+        <option value="google">Google Kalendář</option>
+        <option value="ics">Soubor .ics</option>
+        <option value="off">Nenabízet</option>
+      </select>
+    </label>
+    <label class="row-set"><span>„Napiš Petrovi, že…“ posílat přes</span>
+      <select id="setMessenger">
+        <option value="whatsapp">WhatsApp</option>
+        <option value="sms">SMS</option>
+      </select>
+    </label>
+    <label class="row-set"><span>Po dodiktování odeslat</span><input id="setAutoSend" type="checkbox" class="switch"></label>
+    <label class="row-set"><span>Zavibrovat, když je hotovo</span><input id="setVibrate" type="checkbox" class="switch"></label>
+    <label class="row-set"><span>Nezhasínat displej při práci</span><input id="setWake" type="checkbox" class="switch"></label>
+    <label class="row-set"><span>Jazyk</span>
+      <select id="setLang">
+        <option value="cs-CZ">Čeština</option>
+        <option value="sk-SK">Slovenčina</option>
+        <option value="en-US">English</option>
+        <option value="de-DE">Deutsch</option>
+      </select>
+    </label>
+    <label class="row-set col"><span>Rychlost čtení <b id="rateVal"></b></span>
+      <input id="setRate" type="range" min="0.7" max="1.6" step="0.05">
+    </label>
+    <button id="logoutBtn" class="btn danger wide">Odpojit toto zařízení</button>
+  </div>
+</dialog>
+
+<dialog id="prioDlg" class="sheet">
+  <div class="dlg">
+    <div class="dlg-head"><h2>Priority a hlídání</h2><button class="x" data-close aria-label="Zavřít">✕</button></div>
+    <p id="prioOffline" class="hint" hidden>Počítač je offline – změny se uloží, až se připojí.</p>
+    <label class="row-set"><span>Hlídat zprávy a kalendář<small>Běží na počítači podle pravidel, bez kreditů</small></span><input id="pwEnabled" type="checkbox" class="switch"></label>
+
+    <h3>Co je pro mě důležité</h3>
+    <label class="field"><span>Důležitá slova <small>oddělená čárkou</small></span><textarea id="ppKeywords" rows="2" placeholder="urgentní, faktura, smlouva"></textarea></label>
+    <label class="field"><span>Čím neotravovat <small>slova, podle kterých zprávu zahodit</small></span><textarea id="ppMute" rows="2" placeholder="newsletter, sleva"></textarea></label>
+    <p class="hint">Důležité lidi označíš hvězdičkou v sekci <button id="prioPeopleBtn" class="inline-link">Lidé</button>.</p>
+    <label class="field"><span>Popiš to vlastními slovy <small>pro chytré třídění</small></span><textarea id="ppAbout" rows="3" placeholder="Jsem na volné noze. Důležití jsou klienti, poptávky a cokoliv o penězích. Reklamy ne."></textarea></label>
+    <label class="row-set"><span>Chytré třídění Claudem<small>Nejasné zprávy posoudí levný model (zlomky haléře za zprávu)</small></span><input id="ppSmart" type="checkbox" class="switch"></label>
+
+    <h3>Jak dát vědět</h3>
+    <label class="row-set"><span>Poslat upozornění</span>
+      <select id="ppNotify">
+        <option value="important">Na důležité lidi a slova</option>
+        <option value="vip">Jen na důležité lidi</option>
+        <option value="all">Na všechno</option>
+        <option value="none">Na nic</option>
+      </select>
+    </label>
+    <label class="row-set"><span>Zavolat a přečíst nahlas</span>
+      <select id="ppCall">
+        <option value="vip">Když píše důležitý člověk</option>
+        <option value="important">I při důležitém slově</option>
+        <option value="never">Nikdy</option>
+      </select>
+    </label>
+    <label class="row-set"><span>Noční klid</span><input id="pqOn" type="checkbox" class="switch"></label>
+    <div class="row-set"><span>Od – do</span><span class="times"><input id="pqFrom" type="time"> – <input id="pqTo" type="time"></span></div>
+    <label class="row-set"><span>Důležití lidé projdou vždy<small>I v nočním klidu a při „neruš mě“</small></span><input id="pqVip" type="checkbox" class="switch"></label>
+
+    <h3>Odkud hlídat</h3>
+    <label class="row-set"><span>Oznámení počítače<small id="stNotif">WhatsApp, Outlook, Teams, Propojení s telefonem…</small></span><input id="pwNotif" type="checkbox" class="switch"></label>
+    <label class="field"><span>Ignorovat aplikace <small>oddělené čárkou</small></span><textarea id="pwIgnore" rows="2"></textarea></label>
+
+    <label class="row-set"><span>E-mail<small id="stMail">Vypnuto</small></span><input id="pmOn" type="checkbox" class="switch"></label>
+    <div id="mailBox" class="box">
+      <label class="row-set"><span>Služba</span>
+        <select id="pmPreset">
+          <option value="icloud">iCloud</option>
+          <option value="gmail">Gmail</option>
+          <option value="seznam">Seznam.cz</option>
+          <option value="custom">Vlastní server</option>
+        </select>
+      </label>
+      <label id="pmHostRow" class="field" hidden><span>Server IMAP</span><input id="pmHost" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="imap.example.com"></label>
+      <label class="field"><span>E-mail</span><input id="pmUser" type="email" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ja@example.com"></label>
+      <label class="field"><span>Heslo <small id="pmPassNote"></small></span><input id="pmPass" type="password" autocomplete="new-password" placeholder="heslo pro aplikace"></label>
+      <p id="pmHint" class="hint"></p>
+      <button id="pmTest" class="btn wide">Vyzkoušet připojení</button>
+    </div>
+
+    <label class="field"><span>Kalendáře – odkazy iCal <small>jeden na řádek</small></span><textarea id="pcUrls" rows="2" autocapitalize="off" spellcheck="false" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics"></textarea></label>
+    <p id="stFeeds" class="hint">Google: Nastavení kalendáře → „Tajná adresa ve formátu iCal“.</p>
+    <label class="row-set"><span>Upozornit před událostí</span>
+      <select id="pcLead">
+        <option value="0">Neupozorňovat</option>
+        <option value="5">5 minut</option>
+        <option value="10">10 minut</option>
+        <option value="15">15 minut</option>
+        <option value="30">30 minut</option>
+        <option value="60">hodinu</option>
+        <option value="120">2 hodiny</option>
+      </select>
+    </label>
+
+    <h3>Skutečný telefonní hovor</h3>
+    <p class="hint">Když je zapnuté, aplikace při důležité události zavolá na tvůj telefon a text přečte nahlas. <strong>Na iPhonu fungují push jen u aplikace přidané na plochu (iOS 16.4+).</strong></p>
+    <label class="row-set"><span>Skutečný hovor přes Twilio</span><input id="pcCallOn" type="checkbox" class="switch"></label>
+    <div id="callBox" class="box">
+      <label class="field"><span>Twilio Account SID</span><input id="pcSid" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"></label>
+      <label class="field"><span>Twilio Auth Token <small id="pcTokenNote"></small></span><input id="pcToken" type="password" autocomplete="new-password" placeholder="tvé tajné token"></label>
+      <label class="field"><span>Číslo OD (Twilio) <small>v formátu +1234567890</small></span><input id="pcFrom" type="tel" autocomplete="off" placeholder="+1234567890"></label>
+      <label class="field"><span>Číslo KAM (tvé) <small>v formátu +420123456789</small></span><input id="pcTo" type="tel" autocomplete="off" placeholder="+420123456789"></label>
+      <p id="pcCallHint" class="hint"></p>
+      <button id="pcCallTest" class="btn wide">Zkušební hovor</button>
+    </div>
+
+    <button id="prioSave" class="btn primary wide">Uložit</button>
+    <button id="prioTest" class="btn wide">Zkusit: zavolej mi</button>
+  </div>
+</dialog>
+
+<dialog id="peopleDlg" class="sheet">
+  <div class="dlg">
+    <div class="dlg-head"><h2>Lidé</h2><button class="x" data-close aria-label="Zavřít">✕</button></div>
+    <p class="hint">Podle jména poznám, komu psát a volat. Hvězdička = důležitý člověk: když napíše, dám ti vědět hned.</p>
+    <div id="peopleList" class="people-list"></div>
+    <h3 id="personFormTitle">Přidat člověka</h3>
+    <label class="field"><span>Jméno</span><input id="pnName" type="text" autocomplete="off" placeholder="Petr Novák"></label>
+    <label class="field"><span>Telefon</span><input id="pnPhone" type="tel" autocomplete="off" placeholder="+420 777 123 456"></label>
+    <label class="field"><span>E-mail <small>nebo celá doména @firma.cz</small></span><input id="pnEmail" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="petr@firma.cz"></label>
+    <label class="field"><span>Jak mu říkám <small>oddělené čárkou</small></span><input id="pnAliases" type="text" autocomplete="off" placeholder="Péťa, šéf"></label>
+    <label class="row-set"><span>Důležitý člověk</span><input id="pnVip" type="checkbox" class="switch"></label>
+    <button id="pnSave" class="btn primary wide">Přidat</button>
+    <button id="pnPick" class="btn wide" hidden>Vybrat z kontaktů telefonu</button>
+    <button id="pnCancel" class="btn wide" hidden>Zrušit úpravu</button>
+  </div>
+</dialog>
+
+<dialog id="helpDlg" class="sheet">
+  <div class="dlg">
+    <div class="dlg-head"><h2>Co umím</h2><button class="x" data-close aria-label="Zavřít">✕</button></div>
+    <p class="hint">Tyhle věty poznám sám a vyřídím hned – Claude se k nim nevolá, takže nestojí žádné kredity. Fungují hlasem i psaním; věty označené ☎ i bez počítače. Cokoliv jiného pošlu Claudovi.</p>
+    <div id="helpList" class="help-list"></div>
+  </div>
+</dialog>
+
+<div id="toast" class="toast" hidden></div>
 </body>
 </html>
