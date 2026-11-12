@@ -157,27 +157,29 @@ test('classify: calendar event důležitý', () => {
   assert.equal(result.action, 'notify', 'Kalendář by měl poslat upozornění');
 });
 
-test('classify: bulk email ignorován', () => {
+test('classify: bulk email má nižší prioritu', () => {
   const settings = createSettings({
     priorities: {
-      notify: 'all',
+      notify: 'vip', // Jen VIP dostanou upozornění
       call: 'never',
+      mute: [],
     },
   });
   
   const item = {
     source: 'mail',
     app: 'E-mail',
-    from: 'Newsletter',
-    fromAddr: 'news@company.com',
+    from: 'Info Company',
+    fromAddr: 'info@company.com',
     title: 'Hromadný e-mail',
-    text: 'Toto je hromadný e-mail.',
+    text: 'Toto je hromadný e-mail pro všechny zaměstnance.',
     bulk: true,
   };
   
   const result = classify(item, settings, NOW);
   assert.equal(result.level, 'normal', 'Bulk e-mail by měl být normální');
-  // Bulk by neměl spustit call
+  // S notify: 'vip' a level: 'normal' by action měl být 'log'
+  assert.equal(result.action, 'log', 'Bulk e-mail s notify:vip by neměl spustit upozornění');
 });
 
 test('decide: noční klid', () => {
@@ -213,7 +215,7 @@ test('decide: noční klid s VIP průchodem', () => {
   
   const result = decide('vip', settings, nightTime);
   assert.equal(result.action, 'call', 'VIP by měl projít i v nočním klidu');
-  assert.equal(result.held, false, 'Neměla by být zadržená');
+  assert.equal(result.held, undefined, 'Neměla by být označena jako zadržená (held je undefined)');
 });
 
 test('decide: mimo noční klid', () => {
